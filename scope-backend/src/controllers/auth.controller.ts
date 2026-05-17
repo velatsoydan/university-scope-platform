@@ -26,19 +26,19 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (!email.endsWith('.edu.tr') && !email.endsWith('.edu')) {
-      res.status(400).json({ error: 'Access denied: Please use your official university email address.' });
+    if (!email.endsWith(".edu.tr")) {
+      res.status(400).json({ error: 'Access denied: Please use your official @uskudar.edu.tr university email address.' });
       return;
     }
 
     if (role === 'STUDENT') {
-      if (!/@st\..*\.edu(\.tr)?$/.test(email)) {
-        res.status(400).json({ error: 'Students must use their @st.university.edu email address.' });
+      if (!/@st\..*\.edu\.tr$/.test(email)) {
+        res.status(400).json({ error: 'Students must use their @st.uskudar.edu.tr email address.' });
         return;
       }
     } else if (role === 'INSTRUCTOR') {
       if (/@st\./.test(email)) {
-        res.status(400).json({ error: 'Advisors must use their official staff email address.' });
+        res.status(400).json({ error: 'Advisors must use their official staff email (e.g. name@uskudar.edu.tr).' });
         return;
       }
     }
@@ -121,13 +121,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     if (user.role === 'STUDENT') {
-      if (!/@st\..*\.edu(\.tr)?$/.test(email)) {
-        res.status(400).json({ error: 'Students must use their @st.university.edu email address.' });
+      if (!/@st\..*\.edu\.tr$/.test(email)) {
+        res.status(400).json({ error: 'Students must use their @st.uskudar.edu.tr email address.' });
         return;
       }
     } else if (user.role === 'INSTRUCTOR') {
       if (/@st\./.test(email)) {
-        res.status(400).json({ error: 'Advisors must use their official staff email address.' });
+        res.status(400).json({ error: 'Advisors must use their official staff email (e.g. name@uskudar.edu.tr).' });
         return;
       }
     }
@@ -157,5 +157,81 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('Login Error:', error);
     res.status(500).json({ error: 'An error occurred during login' });
+  }
+};
+
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({ error: 'Email is required' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    // Always return generic message to prevent email enumeration
+    if (user) {
+      const resetToken = jwt.sign(
+        { userId: user.id, purpose: 'password-reset' },
+        JWT_SECRET,
+        { expiresIn: '15m' }
+      );
+
+      const resetLink = `http://localhost:3000/reset-password?token=${resetToken}`;
+      console.log('\n======================================');
+      console.log('  PASSWORD RESET LINK (dev only):');
+      console.log(`  ${resetLink}`);
+      console.log('======================================\n');
+    }
+
+    res.status(200).json({
+      message: 'If an account with that email exists, a reset link has been generated. Check the backend terminal.'
+    });
+  } catch (error) {
+    console.error('Forgot Password Error:', error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+};
+
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      res.status(400).json({ error: 'Token and new password are required' });
+      return;
+    }
+
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      res.status(400).json({ error: 'Password must be at least 8 characters long' });
+      return;
+    }
+
+    let payload: { userId: string; purpose: string };
+    try {
+      payload = jwt.verify(token, JWT_SECRET) as { userId: string; purpose: string };
+    } catch {
+      res.status(400).json({ error: 'Invalid or expired reset token' });
+      return;
+    }
+
+    if (payload.purpose !== 'password-reset') {
+      res.status(400).json({ error: 'Invalid token purpose' });
+      return;
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { id: payload.userId },
+      data: { password: hashedPassword },
+    });
+
+    res.status(200).json({ message: 'Password has been reset successfully. You can now log in.' });
+  } catch (error) {
+    console.error('Reset Password Error:', error);
+    res.status(500).json({ error: 'An error occurred' });
   }
 };
