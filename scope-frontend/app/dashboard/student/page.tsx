@@ -19,6 +19,7 @@ export default function StudentMyHub() {
   const [expandedCard, setExpandedCard] = useState<number | null>(null);
 
   // Admin Announcements (Project Announcements)
+  // TODO: Connect to backend API for admin announcements
   const adminAnnouncements: FeedItem[] = [
     {
       id: 1,

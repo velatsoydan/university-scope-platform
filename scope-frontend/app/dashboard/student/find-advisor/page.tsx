@@ -48,6 +48,7 @@ export default function StudentFindAdvisor() {
   ]);
 
   // Mock advisor data
+  // TODO: Connect to backend API for fetching available advisors
   const advisors: Advisor[] = [
     {
       id: 1,

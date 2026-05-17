@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Home as HomeIcon, Users, Search, FolderOpen, FileText, LogOut, UserCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -11,8 +11,43 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
     const [showProfilePopup, setShowProfilePopup] = useState(false);
 
     const handleLogout = () => {
+        localStorage.removeItem("token");
         router.push("/");
     };
+
+    const [user, setUser] = useState<{name: string, role: string} | null>(null);
+
+    useEffect(() => {
+        // Quick fallback for instant rendering
+        const localName = localStorage.getItem("userName");
+        const localRole = localStorage.getItem("userRole");
+        if (localName) {
+            setUser({ name: localName, role: localRole || "Student" });
+        } else {
+            setUser({ name: "User", role: "Student" });
+        }
+
+        const fetchUser = async () => {
+            try {
+                const token = localStorage.getItem("token");
+                if (!token) return;
+                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/users/me`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.user) {
+                        setUser({ name: data.user.name, role: data.user.role });
+                        localStorage.setItem("userName", data.user.name);
+                        localStorage.setItem("userRole", data.user.role);
+                    }
+                }
+            } catch (error) {
+                console.error("Failed to fetch user data", error);
+            }
+        };
+        fetchUser();
+    }, []);
 
     const sidebarItems = [
         { icon: HomeIcon, label: "My Hub", href: "/dashboard/student" },
@@ -80,8 +115,8 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
                                 <UserCircle className="w-6 h-6 text-white" strokeWidth={2} />
                             </div>
                             <div className="flex-1">
-                                <p className="text-sm font-semibold text-white">Tuana Ener</p>
-                                <p className="text-xs text-white/60">Student</p>
+                                <p className="text-sm font-semibold text-white">{user ? user.name : 'Loading...'}</p>
+                                <p className="text-xs text-white/60">{user ? user.role : 'Student'}</p>
                             </div>
                         </button>
 

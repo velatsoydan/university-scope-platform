@@ -1,35 +1,102 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Globe, Mail, MapPin, Award, BookOpen, Target, GraduationCap, ChevronLeft, Edit3, LogOut, X } from "lucide-react";
 import { toast, Toaster } from "sonner";
 
+export interface AdvisorProfileData {
+  name: string;
+  email: string;
+  title: string;
+  department: string;
+  expertise: string[];
+  researchInterests: string[];
+  previousProjects: string[];
+  github: string;
+  linkedin: string;
+}
+
 export default function AdvisorProfile() {
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const [profileData, setProfileData] = useState({
-    name: "Demir Han",
-    title: "Associate Professor",
-    department: "Computer Engineering",
-    email: "demir.han@university.edu.tr",
-    expertise: ["Machine Learning", "Artificial Intelligence", "Data Science"],
-    researchInterests: ["Deep Learning", "Computer Vision", "Natural Language Processing", "Neural Networks"],
-    previousProjects: [
-      "AI-Based Medical Diagnosis Systems",
-      "Smart City IoT Networks",
-      "Educational Technology Platforms",
-      "Computer Vision for Autonomous Vehicles",
-      "Natural Language Processing Tools"
-    ],
-    github: "https://github.com/demirhan",
-    linkedin: "https://linkedin.com/in/demirhan"
-  });
+  const [profileData, setProfileData] = useState<AdvisorProfileData | null>(null);
+  const [editFormData, setEditFormData] = useState<AdvisorProfileData | null>(null);
 
-  const [editFormData, setEditFormData] = useState(profileData);
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) {
+          router.push("/login/advisor");
+          return;
+        }
+
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/users/me`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+
+        if (!res.ok) {
+          console.error("Profile fetch failed:", res.status);
+          if (res.status === 401 || res.status === 403) {
+            localStorage.removeItem("token");
+            router.push("/login/advisor");
+            return;
+          } else {
+            toast.error("Failed to fetch profile data, using fallback");
+            throw new Error("Fetch failed");
+          }
+        }
+
+        const data = await res.json();
+        const profile = data.user?.advisorProfile || {};
+
+        const fetchedData = {
+          name: data.user?.name || localStorage.getItem("userName") || "Advisor User",
+          email: data.user.email || "",
+          title: profile.title || "Not Specified",
+          department: profile.department || "Not Specified",
+          expertise: profile.expertise || [],
+          researchInterests: profile.researchInterests || [],
+          previousProjects: profile.previousProjects || [],
+          github: profile.githubUrl || "https://github.com/",
+          linkedin: profile.linkedinUrl || "https://linkedin.com/in/"
+        };
+
+        setProfileData(fetchedData);
+        setEditFormData(fetchedData);
+      } catch (err) {
+        console.error("Error fetching profile:", err);
+        toast.error("Using offline fallback data");
+        
+        // Fallback data so it doesn't get stuck loading
+        const fallbackData = {
+          name: localStorage.getItem("userName") || "Advisor User",
+          email: "advisor@university.edu",
+          title: "Not Specified",
+          department: "Not Specified",
+          expertise: [],
+          researchInterests: [],
+          previousProjects: [],
+          github: "https://github.com/",
+          linkedin: "https://linkedin.com/in/"
+        };
+        setProfileData(fallbackData);
+        setEditFormData(fallbackData);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProfile();
+  }, [router]);
 
   const handleSaveChanges = () => {
+    if (!editFormData) return;
     setProfileData(editFormData);
     setIsEditing(false);
     toast.success("Profile Updated!", {
@@ -45,8 +112,17 @@ export default function AdvisorProfile() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem("token");
     router.push("/");
   };
+
+  if (loading || !profileData) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950">
+        <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950">
@@ -78,8 +154,8 @@ export default function AdvisorProfile() {
                 {isEditing ? (
                   <input
                     type="text"
-                    value={editFormData.name}
-                    onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                    value={editFormData!.name}
+                    onChange={(e) => setEditFormData({ ...editFormData!, name: e.target.value })}
                     className="text-5xl font-bold text-white mb-3 bg-white/10 border border-white/20 rounded-[30px] px-6 py-3 w-full focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
                 ) : (
@@ -89,8 +165,8 @@ export default function AdvisorProfile() {
                 {isEditing ? (
                   <input
                     type="text"
-                    value={editFormData.title}
-                    onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                    value={editFormData!.title}
+                    onChange={(e) => setEditFormData({ ...editFormData!, title: e.target.value })}
                     className="text-2xl text-white/80 mb-2 bg-white/10 border border-white/20 rounded-[30px] px-6 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
                 ) : (
@@ -100,8 +176,8 @@ export default function AdvisorProfile() {
                 {isEditing ? (
                   <input
                     type="text"
-                    value={editFormData.department}
-                    onChange={(e) => setEditFormData({ ...editFormData, department: e.target.value })}
+                    value={editFormData!.department}
+                    onChange={(e) => setEditFormData({ ...editFormData!, department: e.target.value })}
                     className="text-xl text-white/60 mb-6 bg-white/10 border border-white/20 rounded-[30px] px-6 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
                 ) : (
@@ -114,8 +190,8 @@ export default function AdvisorProfile() {
                   {isEditing ? (
                     <input
                       type="email"
-                      value={editFormData.email}
-                      onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                      value={editFormData!.email}
+                      onChange={(e) => setEditFormData({ ...editFormData!, email: e.target.value })}
                       className="text-lg bg-white/10 border border-white/20 rounded-[30px] px-6 py-2 text-white flex-1 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                     />
                   ) : (
@@ -137,8 +213,8 @@ export default function AdvisorProfile() {
                 {isEditing ? (
                   <input
                     type="text"
-                    value={editFormData.github}
-                    onChange={(e) => setEditFormData({ ...editFormData, github: e.target.value })}
+                    value={editFormData!.github}
+                    onChange={(e) => setEditFormData({ ...editFormData!, github: e.target.value })}
                     className="font-medium bg-transparent border-none text-white focus:outline-none w-64"
                   />
                 ) : (
@@ -150,8 +226,8 @@ export default function AdvisorProfile() {
                 {isEditing ? (
                   <input
                     type="text"
-                    value={editFormData.linkedin}
-                    onChange={(e) => setEditFormData({ ...editFormData, linkedin: e.target.value })}
+                    value={editFormData!.linkedin}
+                    onChange={(e) => setEditFormData({ ...editFormData!, linkedin: e.target.value })}
                     className="font-medium bg-transparent border-none text-white focus:outline-none w-64"
                   />
                 ) : (
@@ -213,8 +289,8 @@ export default function AdvisorProfile() {
               {isEditing ? (
                 <input
                   type="text"
-                  value={editFormData.expertise.join(", ")}
-                  onChange={(e) => setEditFormData({ ...editFormData, expertise: e.target.value.split(",").map(s => s.trim()) })}
+                  value={editFormData!.expertise.join(", ")}
+                  onChange={(e) => setEditFormData({ ...editFormData!, expertise: e.target.value.split(",").map((s: string) => s.trim()) })}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   placeholder="Separate with commas"
                 />
@@ -243,8 +319,8 @@ export default function AdvisorProfile() {
               {isEditing ? (
                 <input
                   type="text"
-                  value={editFormData.researchInterests.join(", ")}
-                  onChange={(e) => setEditFormData({ ...editFormData, researchInterests: e.target.value.split(",").map(s => s.trim()) })}
+                  value={editFormData!.researchInterests.join(", ")}
+                  onChange={(e) => setEditFormData({ ...editFormData!, researchInterests: e.target.value.split(",").map((s: string) => s.trim()) })}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   placeholder="Separate with commas"
                 />
@@ -272,8 +348,8 @@ export default function AdvisorProfile() {
               </div>
               {isEditing ? (
                 <textarea
-                  value={editFormData.previousProjects.join("\n")}
-                  onChange={(e) => setEditFormData({ ...editFormData, previousProjects: e.target.value.split("\n").filter(s => s.trim()) })}
+                  value={editFormData!.previousProjects.join("\n")}
+                  onChange={(e) => setEditFormData({ ...editFormData!, previousProjects: e.target.value.split("\n").filter((s: string) => s.trim()) })}
                   rows={6}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   placeholder="Each project on a new line"

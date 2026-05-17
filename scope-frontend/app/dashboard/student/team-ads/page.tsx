@@ -35,6 +35,7 @@ export default function StudentTeamAds() {
   const [appliedProjects, setAppliedProjects] = useState<Set<number>>(new Set());
 
   // Team Ads (Student Announcements)
+  // TODO: Connect to backend API for team advertisements
   const teamAds: TeamAd[] = [
     {
       id: 2,

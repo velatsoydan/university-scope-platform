@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Users, FolderKanban, BarChart3, LogOut, Plus, Search, X, Award, ChevronDown, Activity, TrendingUp, CheckCircle, Pencil } from "lucide-react";
+import { Users, FolderKanban, LogOut, Plus, Search, X, Award, ChevronDown, Activity, CheckCircle, Pencil } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast, Toaster } from "sonner";
 
@@ -70,6 +70,7 @@ export default function AdminDashboard() {
   };
 
   // Categories state
+  // TODO: Connect to backend API for categories
   const [categories, setCategories] = useState<Category[]>([
     { id: "1", name: "TÜBİTAK", createdDate: "Jan 10, 2026" },
     { id: "2", name: "Teknofest", createdDate: "Jan 10, 2026" },
@@ -78,6 +79,7 @@ export default function AdminDashboard() {
   ]);
 
   // Announcement state
+  // TODO: Connect to backend API for admin announcements
   const [announcements, setAnnouncements] = useState<Announcement[]>([
     {
       id: "1",
@@ -110,6 +112,7 @@ export default function AdminDashboard() {
   });
 
   // Mock users
+  // TODO: Connect to backend API for all users
   const [users, setUsers] = useState<User[]>([
     { id: "1", email: "ali.yilmaz@university.edu", name: "Ali Yılmaz", role: "Student", status: "Active", joinedDate: "Jan 15, 2026" },
     { id: "2", email: "ayse.yilmaz@university.edu", name: "Prof. Dr. Ayşe Yılmaz", role: "Advisor", status: "Active", joinedDate: "Jan 10, 2026" },
@@ -122,23 +125,13 @@ export default function AdminDashboard() {
   ]);
 
   // Mock projects
+  // TODO: Connect to backend API for all projects
   const projects: Project[] = [
     { id: "1", title: "AI-Powered Smart Agriculture System", owner: "Ali Yılmaz", status: "Active", teamSize: 3, category: "TÜBİTAK", techStack: ["Python", "TensorFlow", "IoT"] },
     { id: "2", title: "Autonomous Drone Navigation", owner: "Zeynep Özkan", status: "Active", teamSize: 2, category: "Teknofest", techStack: ["C++", "ROS", "Computer Vision"] },
     { id: "3", title: "E-Commerce Platform Development", owner: "Elif Çelik", status: "Draft", teamSize: 4, category: "Course", techStack: ["React", "Node.js", "MongoDB"] },
     { id: "4", title: "Blockchain Voting System", owner: "Burak Arslan", status: "Active", teamSize: 3, category: "TÜBİTAK", techStack: ["Solidity", "Web3", "React"] },
     { id: "5", title: "Smart Home IoT Hub", owner: "Ali Yılmaz", status: "Draft", teamSize: 2, category: "Course", techStack: ["Python", "Raspberry Pi", "MQTT"] }
-  ];
-
-  // Mock weekly activity data
-  const weeklyActivity = [
-    { day: "Mon", users: 32, projects: 5 },
-    { day: "Tue", users: 45, projects: 8 },
-    { day: "Wed", users: 38, projects: 6 },
-    { day: "Thu", users: 52, projects: 12 },
-    { day: "Fri", users: 48, projects: 9 },
-    { day: "Sat", users: 28, projects: 3 },
-    { day: "Sun", users: 22, projects: 2 }
   ];
 
   // Filter users
@@ -236,6 +229,7 @@ export default function AdminDashboard() {
 
     try {
       const token = localStorage.getItem("token");
+      const currentCategoryId = editingCategory.id;
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/categories/${currentCategoryId}`, {
         method: "PUT",
         headers: {
@@ -244,8 +238,7 @@ export default function AdminDashboard() {
         },
         body: JSON.stringify({ name: editCategoryName }),
       });
-      
-      const currentCategoryId = editingCategory.id;
+
       setCategories(categories.map(c => c.id === currentCategoryId ? { ...c, name: editCategoryName } : c));
       setShowEditCategoryModal(false);
       setEditingCategory(null);
@@ -642,7 +635,7 @@ export default function AdminDashboard() {
                 <label className="block text-white/80 text-sm font-semibold mb-2">Category</label>
                 <select
                   value={newAnnouncement.category}
-                  onChange={(e) => setNewAnnouncement({ ...newAnnouncement, category: e.target.value as any })}
+                  onChange={(e) => setNewAnnouncement({ ...newAnnouncement, category: e.target.value as "TÜBİTAK" | "Teknofest" | "Course" | "General" })}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                 >
                   <option value="General" className="text-gray-900">General</option>

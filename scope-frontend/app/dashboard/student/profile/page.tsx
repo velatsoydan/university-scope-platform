@@ -1,75 +1,148 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Edit3, User, X, Check, LogOut, Globe, GraduationCap, BookOpen, FolderKanban } from "lucide-react";
 import { toast, Toaster } from "sonner";
 
+export interface StudentProject {
+  id: number;
+  title: string;
+  description: string;
+  status: string;
+  role: string;
+}
+
+export interface StudentProfileData {
+  fullName: string;
+  email: string;
+  year: string;
+  department: string;
+  technicalSkills: string[];
+  interests: string[];
+  bio: string;
+  linkedinUrl: string;
+  githubUrl: string;
+  education: string;
+  projectHistory: StudentProject[];
+}
+
+export interface EditFormData extends Omit<StudentProfileData, 'technicalSkills'> {
+  technicalSkills: string; // Comma-separated string for editing
+}
+
 export default function StudentProfile() {
   const router = useRouter();
   const [showEditModal, setShowEditModal] = useState(false);
+  const [loading, setLoading] = useState(true);
   
-  // Student data (mock)
-  const [studentData, setStudentData] = useState({
-    fullName: "Tuana Ener",
-    year: "3rd Year",
-    department: "Computer Engineering",
-    email: "tuana.ener@university.edu.tr",
-    technicalSkills: ["React", "TypeScript", "Python", "Machine Learning", "TensorFlow", "Node.js", "MongoDB", "UI/UX"],
-    interests: ["Artificial Intelligence", "Web Development", "Data Science"],
-    bio: "Passionate computer engineering student with a strong interest in AI and full-stack development. Currently working on machine learning projects and seeking opportunities to collaborate on innovative tech solutions.",
-    linkedinUrl: "https://linkedin.com/in/tuanaener",
-    githubUrl: "https://github.com/tuanaener",
-    education: "Boğaziçi University, Computer Engineering (2024-2028)",
-    projectHistory: [
-      {
-        id: 1,
-        title: "AI-Powered Study Assistant",
-        description: "Machine learning application for personalized quiz generation",
-        status: "Active",
-        role: "Project Lead"
-      },
-      {
-        id: 2,
-        title: "Campus Event Management Platform",
-        description: "Web platform for organizing university events",
-        status: "Active",
-        role: "Full Stack Developer"
-      },
-      {
-        id: 3,
-        title: "Smart IoT Home Hub",
-        description: "IoT integration system for home automation",
-        status: "Completed",
-        role: "IoT Engineer"
-      }
-    ]
-  });
+  const [studentData, setStudentData] = useState<StudentProfileData | null>(null);
+  const [editFormData, setEditFormData] = useState<EditFormData | null>(null);
 
-  const [editFormData, setEditFormData] = useState({
-    fullName: studentData.fullName,
-    year: studentData.year,
-    department: studentData.department,
-    email: studentData.email,
-    technicalSkills: studentData.technicalSkills.join(", "),
-    bio: studentData.bio,
-    linkedinUrl: studentData.linkedinUrl,
-    githubUrl: studentData.githubUrl,
-    education: studentData.education
-  });
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) {
+          router.push("/login/student");
+          return;
+        }
+
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/users/me`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+
+        if (!res.ok) {
+          console.error("Profile fetch failed:", res.status);
+          if (res.status === 401 || res.status === 403) {
+            localStorage.removeItem("token");
+            router.push("/login/student");
+            return;
+          } else {
+            toast.error("Failed to fetch profile data, using fallback");
+            throw new Error("Fetch failed");
+          }
+        }
+
+        const data = await res.json();
+        const profile = data.user?.studentProfile || {};
+
+        const fetchedData = {
+          fullName: data.user?.name || localStorage.getItem("userName") || "Student User",
+          email: data.user.email || "",
+          year: profile.year || "Not Specified",
+          department: profile.department || "Not Specified",
+          technicalSkills: profile.technicalSkills || [],
+          interests: profile.interests || [],
+          bio: profile.bio || "No bio added yet.",
+          linkedinUrl: profile.linkedinUrl || "",
+          githubUrl: profile.githubUrl || "",
+          education: profile.education || "Not Specified",
+          projectHistory: [
+            // TODO: Connect to backend API for user's project history
+            {
+              id: 1,
+              title: "AI-Powered Study Assistant",
+              description: "Machine learning application for personalized quiz generation",
+              status: "Active",
+              role: "Project Lead"
+            }
+          ]
+        };
+
+        setStudentData(fetchedData);
+        setEditFormData({
+          ...fetchedData,
+          technicalSkills: fetchedData.technicalSkills.join(", ")
+        });
+      } catch (err) {
+        console.error("Error fetching profile:", err);
+        toast.error("Using offline fallback data");
+        
+        // Fallback data so it doesn't get stuck loading
+        const fallbackData = {
+          fullName: localStorage.getItem("userName") || "Student User",
+          email: "student@university.edu",
+          year: "Not Specified",
+          department: "Not Specified",
+          technicalSkills: [],
+          interests: [],
+          bio: "No bio added yet.",
+          linkedinUrl: "",
+          githubUrl: "",
+          education: "Not Specified",
+          projectHistory: []
+        };
+        setStudentData(fallbackData);
+        setEditFormData({
+          ...fallbackData,
+          technicalSkills: ""
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProfile();
+  }, [router]);
 
   const handleSaveChanges = () => {
-    const updatedData = {
+    if (!editFormData || !studentData) return;
+    const updatedData: StudentProfileData = {
       ...studentData,
-      fullName: editFormData.fullName,
-      year: editFormData.year,
-      department: editFormData.department,
-      email: editFormData.email,
-      technicalSkills: editFormData.technicalSkills.split(',').map(s => s.trim()).filter(s => s.length > 0),
-      bio: editFormData.bio,
-      linkedinUrl: editFormData.linkedinUrl,
-      githubUrl: editFormData.githubUrl,
-      education: editFormData.education
+      fullName: editFormData.fullName || "",
+      year: editFormData.year || "",
+      department: editFormData.department || "",
+      email: editFormData.email || "",
+      technicalSkills: (editFormData.technicalSkills as string).split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0),
+      bio: editFormData.bio || "",
+      linkedinUrl: editFormData.linkedinUrl || "",
+      githubUrl: editFormData.githubUrl || "",
+      education: editFormData.education || "",
+      interests: studentData.interests,
+      projectHistory: studentData.projectHistory,
     };
     
     setStudentData(updatedData);
@@ -83,8 +156,17 @@ export default function StudentProfile() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem("token");
     router.push("/");
   };
+
+  if (loading || !studentData) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950">
+        <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen">
@@ -286,8 +368,8 @@ export default function StudentProfile() {
                   <label className="block text-white/80 text-sm font-semibold mb-2">Full Name</label>
                   <input
                     type="text"
-                    value={editFormData.fullName}
-                    onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })}
+                    value={editFormData!.fullName}
+                    onChange={(e) => setEditFormData({ ...editFormData!, fullName: e.target.value })}
                     className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
                 </div>
@@ -296,8 +378,8 @@ export default function StudentProfile() {
                   <label className="block text-white/80 text-sm font-semibold mb-2">Year</label>
                   <input
                     type="text"
-                    value={editFormData.year}
-                    onChange={(e) => setEditFormData({ ...editFormData, year: e.target.value })}
+                    value={editFormData!.year}
+                    onChange={(e) => setEditFormData({ ...editFormData!, year: e.target.value })}
                     className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
                 </div>
@@ -307,8 +389,8 @@ export default function StudentProfile() {
                 <label className="block text-white/80 text-sm font-semibold mb-2">Department</label>
                 <input
                   type="text"
-                  value={editFormData.department}
-                  onChange={(e) => setEditFormData({ ...editFormData, department: e.target.value })}
+                  value={editFormData!.department}
+                  onChange={(e) => setEditFormData({ ...editFormData!, department: e.target.value })}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                 />
               </div>
@@ -317,8 +399,8 @@ export default function StudentProfile() {
                 <label className="block text-white/80 text-sm font-semibold mb-2">Email</label>
                 <input
                   type="email"
-                  value={editFormData.email}
-                  onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                  value={editFormData!.email}
+                  onChange={(e) => setEditFormData({ ...editFormData!, email: e.target.value })}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                 />
               </div>
@@ -328,8 +410,8 @@ export default function StudentProfile() {
                   <label className="block text-white/80 text-sm font-semibold mb-2">LinkedIn URL</label>
                   <input
                     type="url"
-                    value={editFormData.linkedinUrl}
-                    onChange={(e) => setEditFormData({ ...editFormData, linkedinUrl: e.target.value })}
+                    value={editFormData!.linkedinUrl}
+                    onChange={(e) => setEditFormData({ ...editFormData!, linkedinUrl: e.target.value })}
                     placeholder="https://linkedin.com/in/username"
                     className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
@@ -339,8 +421,8 @@ export default function StudentProfile() {
                   <label className="block text-white/80 text-sm font-semibold mb-2">GitHub URL</label>
                   <input
                     type="url"
-                    value={editFormData.githubUrl}
-                    onChange={(e) => setEditFormData({ ...editFormData, githubUrl: e.target.value })}
+                    value={editFormData!.githubUrl}
+                    onChange={(e) => setEditFormData({ ...editFormData!, githubUrl: e.target.value })}
                     placeholder="https://github.com/username"
                     className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
@@ -351,8 +433,8 @@ export default function StudentProfile() {
                 <label className="block text-white/80 text-sm font-semibold mb-2">Technical Skills (comma-separated)</label>
                 <input
                   type="text"
-                  value={editFormData.technicalSkills}
-                  onChange={(e) => setEditFormData({ ...editFormData, technicalSkills: e.target.value })}
+                  value={editFormData!.technicalSkills}
+                  onChange={(e) => setEditFormData({ ...editFormData!, technicalSkills: e.target.value })}
                   placeholder="React, Python, Machine Learning"
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                 />
@@ -362,8 +444,8 @@ export default function StudentProfile() {
                 <label className="block text-white/80 text-sm font-semibold mb-2">Education</label>
                 <input
                   type="text"
-                  value={editFormData.education}
-                  onChange={(e) => setEditFormData({ ...editFormData, education: e.target.value })}
+                  value={editFormData!.education}
+                  onChange={(e) => setEditFormData({ ...editFormData!, education: e.target.value })}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                 />
               </div>
@@ -371,8 +453,8 @@ export default function StudentProfile() {
               <div>
                 <label className="block text-white/80 text-sm font-semibold mb-2">About Me</label>
                 <textarea
-                  value={editFormData.bio}
-                  onChange={(e) => setEditFormData({ ...editFormData, bio: e.target.value })}
+                  value={editFormData!.bio}
+                  onChange={(e) => setEditFormData({ ...editFormData!, bio: e.target.value })}
                   rows={4}
                   className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50 resize-none"
                 />

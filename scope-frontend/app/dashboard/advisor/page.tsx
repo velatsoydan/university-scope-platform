@@ -95,6 +95,7 @@ export default function AdvisorDashboard() {
   });
 
   // Incoming requests
+  // TODO: Connect to backend API for incoming project requests
   const [requests, setRequests] = useState<ProjectRequest[]>([
     {
       id: 1,
@@ -149,6 +150,7 @@ export default function AdvisorDashboard() {
   ]);
 
   // Ongoing projects - will be dynamically updated
+  // TODO: Connect to backend API for ongoing projects
   const [ongoingProjects, setOngoingProjects] = useState<OngoingProject[]>([
     {
       id: 101,
@@ -209,6 +211,7 @@ export default function AdvisorDashboard() {
   ]);
 
   // Mock announcements
+  // TODO: Connect to backend API for advisor announcements
   const announcements = [
     {
       id: 1,

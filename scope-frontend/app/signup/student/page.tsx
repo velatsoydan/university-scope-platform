@@ -3,13 +3,15 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast, Toaster } from "sonner";
 
-export default function StudentLogin() {
+export default function StudentSignup() {
   const router = useRouter();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [emailError, setEmailError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [emailError, setEmailError] = useState("");
 
   const validateEmail = (email: string) => {
     if (!email.endsWith(".edu.tr") && !email.endsWith(".edu")) return "Access denied: Please use your official university email address.";
@@ -29,28 +31,26 @@ export default function StudentLogin() {
 
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/auth/login`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/auth/register`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, email, password, role: "STUDENT" }),
       });
 
       const data = await res.json();
-      
-      if (!res.ok) {
-        setEmailError(data.error || "Login failed");
-        return;
+
+      if (res.ok) {
+        toast.success("Account created successfully. Please log in.");
+        setTimeout(() => {
+          router.push("/login/student");
+        }, 1500);
+      } else {
+        toast.error(data.error || "Registration failed");
       }
-
-      // Store token and JWT decode fallback (userName)
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("userRole", data.user.role);
-      localStorage.setItem("userName", data.user.name);
-
-      router.push("/dashboard/student");
     } catch (err) {
-      console.error("Login Error:", err);
-      setEmailError("Network error. Could not connect to the server.");
+      toast.error("Network error. Make sure the backend is running.");
     } finally {
       setLoading(false);
     }
@@ -58,8 +58,9 @@ export default function StudentLogin() {
 
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#1a1145] via-[#211654] to-[#2a1b6b] px-6">
-      {/* Login Card */}
-      <div className="w-full max-w-lg rounded-[40px] bg-white/[0.07] backdrop-blur-xl border border-white/[0.1] px-8 py-14 sm:px-12 sm:py-16">
+      <Toaster position="bottom-right" />
+      {/* Signup Card */}
+      <div className="w-full max-w-lg rounded-[40px] bg-white/[0.07] backdrop-blur-xl border border-white/[0.1] px-8 py-14 sm:px-12 sm:py-16 mt-8 mb-8">
         {/* Icon */}
         <div className="mx-auto mb-8 flex h-20 w-20 items-center justify-center rounded-full bg-white/[0.08] border border-white/[0.12]">
           <svg
@@ -79,14 +80,46 @@ export default function StudentLogin() {
 
         {/* Title */}
         <h1 className="mb-2 text-center text-3xl font-extrabold text-white sm:text-4xl">
-          Student Log In
+          Student Sign Up
         </h1>
         <p className="mb-10 text-center text-base text-white/50">
-          Enter your details to continue
+          Create an account to join projects
         </p>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Name */}
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-white/90">
+              Full Name
+            </label>
+            <div className="flex items-center gap-3 rounded-2xl bg-white/[0.06] border border-white/[0.1] px-5 py-4">
+              {/* User icon */}
+              <svg
+                className="h-5 w-5 shrink-0 text-white/40"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
+                />
+              </svg>
+              <input
+                id="student-name"
+                type="text"
+                placeholder="John Doe"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-transparent text-base text-white placeholder-white/30 outline-none"
+                required
+              />
+            </div>
+          </div>
+
           {/* Email */}
           <div>
             <label className="mb-1 block text-sm font-semibold text-white/90">
@@ -148,39 +181,30 @@ export default function StudentLogin() {
               <input
                 id="student-password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder="Minimum 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-transparent text-base text-white placeholder-white/30 outline-none"
                 required
+                minLength={8}
               />
             </div>
           </div>
 
-          {/* Forgot password */}
-          <div className="text-right">
-            <Link
-              href="/"
-              className="text-sm font-medium text-blue-400 transition-colors hover:text-blue-300"
-            >
-              Forgot password?
-            </Link>
-          </div>
-
-          {/* Log In button */}
+          {/* Sign Up button */}
           <button
             type="submit"
             disabled={loading}
-            id="student-login-submit"
-            className="w-full rounded-2xl bg-gradient-to-r from-[#3b5998] to-[#4a6eb5] py-5 text-lg font-bold text-white shadow-lg transition-all duration-300 hover:from-[#4a6eb5] hover:to-[#5a7ec5] hover:shadow-xl hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-blue-400/50 disabled:opacity-70 disabled:cursor-not-allowed"
+            id="student-signup-submit"
+            className="w-full rounded-2xl bg-gradient-to-r from-[#3b5998] to-[#4a6eb5] py-5 text-lg font-bold text-white shadow-lg transition-all duration-300 hover:from-[#4a6eb5] hover:to-[#5a7ec5] hover:shadow-xl hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-blue-400/50 disabled:opacity-70 disabled:hover:scale-100"
           >
-            {loading ? "Logging in..." : "Log In"}
+            {loading ? "Creating Account..." : "Sign Up"}
           </button>
         </form>
 
         {/* Change Role */}
         <Link
-          href="/login"
+          href="/signup"
           className="mt-8 flex items-center justify-center gap-2 text-base font-medium text-white/60 transition-colors hover:text-white"
         >
           <svg

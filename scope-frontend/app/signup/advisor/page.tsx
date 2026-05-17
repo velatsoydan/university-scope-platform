@@ -3,17 +3,19 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast, Toaster } from "sonner";
 
-export default function StudentLogin() {
+export default function AdvisorSignup() {
   const router = useRouter();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [emailError, setEmailError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [emailError, setEmailError] = useState("");
 
   const validateEmail = (email: string) => {
     if (!email.endsWith(".edu.tr") && !email.endsWith(".edu")) return "Access denied: Please use your official university email address.";
-    if (!/@st\..*\.edu(\.tr)?$/.test(email)) return "Students must use their @st.university.edu email address.";
+    if (/@st\./.test(email)) return "Advisors must use their official staff email address.";
     return null;
   };
 
@@ -29,28 +31,26 @@ export default function StudentLogin() {
 
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/auth/login`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/auth/register`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, email, password, role: "INSTRUCTOR" }),
       });
 
       const data = await res.json();
-      
-      if (!res.ok) {
-        setEmailError(data.error || "Login failed");
-        return;
+
+      if (res.ok) {
+        toast.success("Account created successfully. Please log in.");
+        setTimeout(() => {
+          router.push("/login/advisor");
+        }, 1500);
+      } else {
+        toast.error(data.error || "Registration failed");
       }
-
-      // Store token and JWT decode fallback (userName)
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("userRole", data.user.role);
-      localStorage.setItem("userName", data.user.name);
-
-      router.push("/dashboard/student");
     } catch (err) {
-      console.error("Login Error:", err);
-      setEmailError("Network error. Could not connect to the server.");
+      toast.error("Network error. Make sure the backend is running.");
     } finally {
       setLoading(false);
     }
@@ -58,8 +58,9 @@ export default function StudentLogin() {
 
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#1a1145] via-[#211654] to-[#2a1b6b] px-6">
-      {/* Login Card */}
-      <div className="w-full max-w-lg rounded-[40px] bg-white/[0.07] backdrop-blur-xl border border-white/[0.1] px-8 py-14 sm:px-12 sm:py-16">
+      <Toaster position="bottom-right" />
+      {/* Signup Card */}
+      <div className="w-full max-w-lg rounded-[40px] bg-white/[0.07] backdrop-blur-xl border border-white/[0.1] px-8 py-14 sm:px-12 sm:py-16 mt-8 mb-8">
         {/* Icon */}
         <div className="mx-auto mb-8 flex h-20 w-20 items-center justify-center rounded-full bg-white/[0.08] border border-white/[0.12]">
           <svg
@@ -72,31 +73,58 @@ export default function StudentLogin() {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              d="M4.26 10.147a60.438 60.438 0 0 0-.491 6.347A48.62 48.62 0 0 1 12 20.904a48.62 48.62 0 0 1 8.232-4.41 60.46 60.46 0 0 0-.491-6.347m-15.482 0a50.636 50.636 0 0 0-2.658-.813A59.906 59.906 0 0 1 12 3.493a59.903 59.903 0 0 1 10.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.717 50.717 0 0 1 12 13.489a50.702 50.702 0 0 1 7.74-3.342M6.75 15v-3.75m0 0h-.008v.008H6.75V11.25z"
+              d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18"
             />
           </svg>
         </div>
 
         {/* Title */}
         <h1 className="mb-2 text-center text-3xl font-extrabold text-white sm:text-4xl">
-          Student Log In
+          Advisor Sign Up
         </h1>
         <p className="mb-10 text-center text-base text-white/50">
-          Enter your details to continue
+          Create an account to mentor teams
         </p>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Name */}
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-white/90">
+              Full Name
+            </label>
+            <div className="flex items-center gap-3 rounded-2xl bg-white/[0.06] border border-white/[0.1] px-5 py-4">
+              <svg
+                className="h-5 w-5 shrink-0 text-white/40"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
+                />
+              </svg>
+              <input
+                id="advisor-name"
+                type="text"
+                placeholder="Dr. Jane Doe"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-transparent text-base text-white placeholder-white/30 outline-none"
+                required
+              />
+            </div>
+          </div>
+
           {/* Email */}
           <div>
-            <label className="mb-1 block text-sm font-semibold text-white/90">
+            <label className="mb-2 block text-sm font-semibold text-white/90">
               Email
             </label>
-            <p className="mb-3 text-xs text-white/50">
-              Please use your official @st.uskudar.edu.tr student email.
-            </p>
             <div className="flex items-center gap-3 rounded-2xl bg-white/[0.06] border border-white/[0.1] px-5 py-4">
-              {/* Envelope icon */}
               <svg
                 className="h-5 w-5 shrink-0 text-white/40"
                 fill="none"
@@ -111,9 +139,9 @@ export default function StudentLogin() {
                 />
               </svg>
               <input
-                id="student-email"
+                id="advisor-email"
                 type="email"
-                placeholder="name@st.uskudar.edu.tr"
+                placeholder="name@uskudar.edu.tr"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-transparent text-base text-white placeholder-white/30 outline-none"
@@ -131,7 +159,6 @@ export default function StudentLogin() {
               Password
             </label>
             <div className="flex items-center gap-3 rounded-2xl bg-white/[0.06] border border-white/[0.1] px-5 py-4">
-              {/* Lock icon */}
               <svg
                 className="h-5 w-5 shrink-0 text-white/40"
                 fill="none"
@@ -146,41 +173,32 @@ export default function StudentLogin() {
                 />
               </svg>
               <input
-                id="student-password"
+                id="advisor-password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder="Minimum 8 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-transparent text-base text-white placeholder-white/30 outline-none"
                 required
+                minLength={8}
               />
             </div>
           </div>
 
-          {/* Forgot password */}
-          <div className="text-right">
-            <Link
-              href="/"
-              className="text-sm font-medium text-blue-400 transition-colors hover:text-blue-300"
-            >
-              Forgot password?
-            </Link>
-          </div>
-
-          {/* Log In button */}
+          {/* Sign Up button */}
           <button
             type="submit"
             disabled={loading}
-            id="student-login-submit"
-            className="w-full rounded-2xl bg-gradient-to-r from-[#3b5998] to-[#4a6eb5] py-5 text-lg font-bold text-white shadow-lg transition-all duration-300 hover:from-[#4a6eb5] hover:to-[#5a7ec5] hover:shadow-xl hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-blue-400/50 disabled:opacity-70 disabled:cursor-not-allowed"
+            id="advisor-signup-submit"
+            className="w-full rounded-2xl bg-gradient-to-r from-[#3b5998] to-[#4a6eb5] py-5 text-lg font-bold text-white shadow-lg transition-all duration-300 hover:from-[#4a6eb5] hover:to-[#5a7ec5] hover:shadow-xl hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-blue-400/50 disabled:opacity-70 disabled:hover:scale-100"
           >
-            {loading ? "Logging in..." : "Log In"}
+            {loading ? "Creating Account..." : "Sign Up"}
           </button>
         </form>
 
         {/* Change Role */}
         <Link
-          href="/login"
+          href="/signup"
           className="mt-8 flex items-center justify-center gap-2 text-base font-medium text-white/60 transition-colors hover:text-white"
         >
           <svg

@@ -8,10 +8,52 @@ export default function AdvisorLogin() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const validateEmail = (email: string) => {
+    if (!email.endsWith(".edu.tr") && !email.endsWith(".edu")) return "Access denied: Please use your official university email address.";
+    if (/@st\./.test(email)) return "Advisors must use their official staff email address.";
+    return null;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/dashboard/advisor");
+    setEmailError("");
+    
+    const errorMsg = validateEmail(email);
+    if (errorMsg) {
+      setEmailError(errorMsg);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok) {
+        setEmailError(data.error || "Login failed");
+        return;
+      }
+
+      // Store token and JWT decode fallback (userName)
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("userRole", data.user.role);
+      localStorage.setItem("userName", data.user.name);
+
+      router.push("/dashboard/advisor");
+    } catch (err) {
+      console.error("Login Error:", err);
+      setEmailError("Network error. Could not connect to the server.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -67,13 +109,16 @@ export default function AdvisorLogin() {
               <input
                 id="advisor-email"
                 type="email"
-                placeholder="advisor@university.edu"
+                placeholder="name@uskudar.edu.tr"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-transparent text-base text-white placeholder-white/30 outline-none"
                 required
               />
             </div>
+            {emailError && (
+              <p className="mt-2 text-sm text-red-500">{emailError}</p>
+            )}
           </div>
 
           {/* Password */}
@@ -109,21 +154,22 @@ export default function AdvisorLogin() {
 
           {/* Forgot password */}
           <div className="text-right">
-            <a
-              href="#"
+            <Link
+              href="/"
               className="text-sm font-medium text-blue-400 transition-colors hover:text-blue-300"
             >
               Forgot password?
-            </a>
+            </Link>
           </div>
 
           {/* Log In button */}
           <button
             type="submit"
+            disabled={loading}
             id="advisor-login-submit"
-            className="w-full rounded-2xl bg-gradient-to-r from-[#3b5998] to-[#4a6eb5] py-5 text-lg font-bold text-white shadow-lg transition-all duration-300 hover:from-[#4a6eb5] hover:to-[#5a7ec5] hover:shadow-xl hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-blue-400/50"
+            className="w-full rounded-2xl bg-gradient-to-r from-[#3b5998] to-[#4a6eb5] py-5 text-lg font-bold text-white shadow-lg transition-all duration-300 hover:from-[#4a6eb5] hover:to-[#5a7ec5] hover:shadow-xl hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-blue-400/50 disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            Log In
+            {loading ? "Logging in..." : "Log In"}
           </button>
         </form>
 

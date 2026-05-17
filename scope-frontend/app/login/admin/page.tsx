@@ -10,9 +10,21 @@ export default function AdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [emailError, setEmailError] = useState("");
+
+  const validateEmail = (email: string) => {
+    return email.endsWith(".edu.tr") || email.endsWith(".edu");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setEmailError("");
+
+    if (!validateEmail(email)) {
+      setEmailError("Access denied: Please use your official university email address.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -83,6 +95,9 @@ export default function AdminLogin() {
                 required
               />
             </div>
+            {emailError && (
+              <p className="mt-2 text-sm text-red-500">{emailError}</p>
+            )}
           </div>
 
           <div>

@@ -52,55 +52,8 @@ export default function StudentMyProjectsAdvanced() {
   });
 
   // Mock projects (some owned, some joined)
-  const [projects, setProjects] = useState<Project[]>([
-    {
-      id: 1,
-      title: "AI-Powered Study Assistant",
-      description: "A machine learning application that helps students organize study materials and generate personalized quizzes.",
-      status: "Advisor Assigned",
-      teamMembers: [
-        { id: 1, name: "Tuana Ener (You)", role: "Project Lead", email: "tuana.ener@university.edu.tr" },
-        { id: 2, name: "Ayşe Demir", role: "ML Engineer", email: "ayse.demir@university.edu.tr" },
-        { id: 3, name: "Mehmet Kara", role: "Frontend Developer", email: "mehmet.kara@university.edu.tr" }
-      ],
-      category: "AI",
-      createdDate: "March 10, 2026",
-      budget: "15,000 TL",
-      isOwner: true,
-      requiredSkills: ["Python", "TensorFlow", "React"]
-    },
-    {
-      id: 2,
-      title: "Campus Event Management Platform",
-      description: "Web platform for organizing and managing university events, clubs, and student activities.",
-      status: "Pending Advisor",
-      teamMembers: [
-        { id: 1, name: "Tuana Ener (You)", role: "Project Lead", email: "tuana.ener@university.edu.tr" },
-        { id: 4, name: "Zeynep Yıldız", role: "Backend Developer", email: "zeynep.yildiz@university.edu.tr" }
-      ],
-      category: "Web",
-      createdDate: "March 15, 2026",
-      budget: "10,000 TL",
-      isOwner: true,
-      requiredSkills: ["React", "Node.js", "MongoDB"]
-    },
-    {
-      id: 3,
-      title: "Mobile Health Tracking App",
-      description: "A comprehensive fitness tracking application with AI-powered workout recommendations.",
-      status: "Advisor Assigned",
-      teamMembers: [
-        { id: 5, name: "Can Özkan", role: "Project Lead", email: "can.ozkan@university.edu.tr" },
-        { id: 1, name: "Tuana Ener (You)", role: "Frontend Developer", email: "tuana.ener@university.edu.tr" },
-        { id: 6, name: "Elif Çelik", role: "Designer", email: "elif.celik@university.edu.tr" }
-      ],
-      category: "Mobile",
-      createdDate: "March 12, 2026",
-      budget: "12,000 TL",
-      isOwner: false,
-      requiredSkills: ["React Native", "Firebase", "UI/UX"]
-    }
-  ]);
+  // TODO: Connect to backend API for user projects
+  const [projects, setProjects] = useState<Project[]>([]);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData({ ...formData, [field]: value });
@@ -117,7 +70,7 @@ export default function StudentMyProjectsAdvanced() {
       description: formData.description,
       status: "Pending Advisor",
       teamMembers: [
-        { id: 1, name: "Tuana Ener (You)", role: "Project Lead", email: "tuana.ener@university.edu.tr" }
+        // The project owner will be added from real user data when integrating backend API
       ],
       category: formData.category,
       createdDate: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),

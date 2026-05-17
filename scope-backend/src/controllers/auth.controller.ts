@@ -26,6 +26,23 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    if (!email.endsWith('.edu.tr') && !email.endsWith('.edu')) {
+      res.status(400).json({ error: 'Access denied: Please use your official university email address.' });
+      return;
+    }
+
+    if (role === 'STUDENT') {
+      if (!/@st\..*\.edu(\.tr)?$/.test(email)) {
+        res.status(400).json({ error: 'Students must use their @st.university.edu email address.' });
+        return;
+      }
+    } else if (role === 'INSTRUCTOR') {
+      if (/@st\./.test(email)) {
+        res.status(400).json({ error: 'Advisors must use their official staff email address.' });
+        return;
+      }
+    }
+
     if (typeof password !== 'string' || password.length < 8) {
       res.status(400).json({ error: 'Password must be at least 8 characters long' });
       return;
@@ -101,6 +118,18 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     if (!user) {
       res.status(401).json({ error: 'Invalid email or password' });
       return;
+    }
+
+    if (user.role === 'STUDENT') {
+      if (!/@st\..*\.edu(\.tr)?$/.test(email)) {
+        res.status(400).json({ error: 'Students must use their @st.university.edu email address.' });
+        return;
+      }
+    } else if (user.role === 'INSTRUCTOR') {
+      if (/@st\./.test(email)) {
+        res.status(400).json({ error: 'Advisors must use their official staff email address.' });
+        return;
+      }
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
