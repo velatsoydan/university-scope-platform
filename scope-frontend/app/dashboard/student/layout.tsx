@@ -3,51 +3,101 @@
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Home as HomeIcon, Users, Search, FolderOpen, FileText, LogOut, UserCircle } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+
+// -----------------------------------------------------------------------------
+// API base — env var holds the host (no /api suffix); endpoints below prepend
+// /api explicitly to stay consistent with the rest of the app.
+// -----------------------------------------------------------------------------
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api`;
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+function getToken(): string | null {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("token");
+}
+
+function humanizeRole(role: string | null | undefined): string {
+    if (!role) return "Student";
+    switch (role.toUpperCase()) {
+        case "STUDENT": return "Student";
+        case "INSTRUCTOR": return "Advisor";
+        case "ADMIN": return "Admin";
+        default: return role;
+    }
+}
+
+function initialsOf(name: string): string {
+    if (!name) return "?";
+    return name.split(" ").map(n => n[0] ?? "").join("").slice(0, 2).toUpperCase() || "?";
+}
+
+interface SessionUser {
+    name: string;
+    role: string;
+}
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
     const [showProfilePopup, setShowProfilePopup] = useState(false);
+    const [user, setUser] = useState<SessionUser | null>(null);
 
     const handleLogout = () => {
         localStorage.removeItem("token");
+        localStorage.removeItem("userName");
+        localStorage.removeItem("userRole");
         router.push("/");
     };
 
-    const [user, setUser] = useState<{name: string, role: string} | null>(null);
-
     useEffect(() => {
-        // Quick fallback for instant rendering
+        // Auth guard — kick anyone without a token straight to login.
+        const token = getToken();
+        if (!token) {
+            router.push("/login/student");
+            return;
+        }
+
+        // Optimistic UI: paint immediately from cached localStorage values
+        // so the sidebar doesn't flash "Loading..." on every navigation.
         const localName = localStorage.getItem("userName");
         const localRole = localStorage.getItem("userRole");
         if (localName) {
-            setUser({ name: localName, role: localRole || "Student" });
-        } else {
-            setUser({ name: "User", role: "Student" });
+            setUser({ name: localName, role: humanizeRole(localRole) });
         }
 
-        const fetchUser = async () => {
+        // Authoritative fetch — refresh from /me; if the server rejects the
+        // token, clear the session and redirect.
+        (async () => {
             try {
-                const token = localStorage.getItem("token");
-                if (!token) return;
-                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/users/me`, {
-                    headers: { "Authorization": `Bearer ${token}` }
+                const res = await fetch(`${API_URL}/users/me`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    cache: "no-store",
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.user) {
-                        setUser({ name: data.user.name, role: data.user.role });
-                        localStorage.setItem("userName", data.user.name);
-                        localStorage.setItem("userRole", data.user.role);
-                    }
+
+                if (res.status === 401 || res.status === 403) {
+                    localStorage.removeItem("token");
+                    localStorage.removeItem("userName");
+                    localStorage.removeItem("userRole");
+                    router.push("/login/student");
+                    return;
+                }
+                if (!res.ok) return; // Transient — keep optimistic UI
+
+                const data = await res.json();
+                if (data.user) {
+                    setUser({ name: data.user.name, role: humanizeRole(data.user.role) });
+                    localStorage.setItem("userName", data.user.name);
+                    localStorage.setItem("userRole", data.user.role);
                 }
             } catch (error) {
+                // Network errors fall through — cached data continues to render.
                 console.error("Failed to fetch user data", error);
             }
-        };
-        fetchUser();
-    }, []);
+        })();
+    }, [router]);
 
     const sidebarItems = [
         { icon: HomeIcon, label: "My Hub", href: "/dashboard/student" },
@@ -112,11 +162,15 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
                             className="w-full flex items-center space-x-3 px-5 py-4 rounded-[28px] text-white/80 hover:text-white hover:bg-white/15 transition-all duration-200 text-left cursor-pointer"
                         >
                             <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center">
-                                <UserCircle className="w-6 h-6 text-white" strokeWidth={2} />
+                                {user ? (
+                                    <span className="text-white font-bold text-sm">{initialsOf(user.name)}</span>
+                                ) : (
+                                    <UserCircle className="w-6 h-6 text-white" strokeWidth={2} />
+                                )}
                             </div>
                             <div className="flex-1">
-                                <p className="text-sm font-semibold text-white">{user ? user.name : 'Loading...'}</p>
-                                <p className="text-xs text-white/60">{user ? user.role : 'Student'}</p>
+                                <p className="text-sm font-semibold text-white">{user ? user.name : "Loading..."}</p>
+                                <p className="text-xs text-white/60">{user ? user.role : "Student"}</p>
                             </div>
                         </button>
 

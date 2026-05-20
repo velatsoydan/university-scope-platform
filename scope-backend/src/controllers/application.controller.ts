@@ -56,6 +56,118 @@ export const applyForProject = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
+/**
+ * GET /api/applications/mine
+ * Lists every ProjectApplication submitted by the calling student, with the
+ * underlying project, owner, category, and team-ad info included so the
+ * "My Applications" page can render without extra round-trips.
+ */
+export const getMyApplications = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const applications = await prisma.projectApplication.findMany({
+      where: { studentId: userId },
+      orderBy: { appliedAt: 'desc' },
+      include: {
+        project: {
+          include: {
+            category: true,
+            owner: { select: { id: true, name: true, email: true } },
+            teamAd: true,
+            _count: { select: { teamMembers: true } },
+          }
+        }
+      }
+    });
+    res.status(200).json({ applications });
+  } catch (error) {
+    console.error('Error fetching my applications:', error);
+    res.status(500).json({ error: 'Failed to fetch your applications' });
+  }
+};
+
+/**
+ * GET /api/applications/incoming
+ * Lists every ProjectApplication submitted to a project the calling student
+ * owns, with the applicant + student profile embedded so the project owner
+ * can review skills, interests and bio in a single round-trip.
+ */
+export const getIncomingApplications = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const applications = await prisma.projectApplication.findMany({
+      where: { project: { ownerId: userId } },
+      orderBy: { appliedAt: 'desc' },
+      include: {
+        project: {
+          select: {
+            id: true,
+            title: true,
+            category: { select: { id: true, name: true } },
+          }
+        },
+        student: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            studentProfile: {
+              select: {
+                technicalSkills: true,
+                interests: true,
+                bio: true,
+                department: true,
+                year: true,
+              }
+            }
+          }
+        }
+      }
+    });
+    res.status(200).json({ applications });
+  } catch (error) {
+    console.error('Error fetching incoming applications:', error);
+    res.status(500).json({ error: 'Failed to fetch incoming applications' });
+  }
+};
+
+/**
+ * DELETE /api/applications/:applicationId
+ * The applicant cancels their own application. Only PENDING applications
+ * can be withdrawn — once accepted/rejected, the record is preserved as audit.
+ */
+export const withdrawApplication = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const { applicationId } = req.params;
+
+    const application = await prisma.projectApplication.findUnique({
+      where: { id: applicationId }
+    });
+
+    if (!application) {
+      res.status(404).json({ error: 'Application not found' });
+      return;
+    }
+
+    if (application.studentId !== userId) {
+      res.status(403).json({ error: 'You can only withdraw your own applications' });
+      return;
+    }
+
+    if (application.status !== 'PENDING') {
+      res.status(400).json({ error: 'Only pending applications can be withdrawn' });
+      return;
+    }
+
+    await prisma.projectApplication.delete({ where: { id: applicationId } });
+    res.status(200).json({ message: 'Application withdrawn successfully' });
+  } catch (error) {
+    console.error('Error withdrawing application:', error);
+    res.status(500).json({ error: 'Failed to withdraw application' });
+  }
+};
+
 export const respondToApplication = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const ownerId = req.user!.userId;

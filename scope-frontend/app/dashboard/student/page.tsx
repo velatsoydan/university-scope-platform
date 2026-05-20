@@ -1,72 +1,105 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Search, ChevronDown, ChevronUp } from "lucide-react";
+import { toast, Toaster } from "sonner";
 
-interface FeedItem {
-  id: number;
-  type: "project";
+// -----------------------------------------------------------------------------
+// API base — env var holds the host (no /api suffix); endpoints below prepend
+// /api explicitly to stay consistent with the rest of the app.
+// -----------------------------------------------------------------------------
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api`;
+
+// -----------------------------------------------------------------------------
+// Types — derived from prisma/schema.prisma (Announcement model)
+// -----------------------------------------------------------------------------
+interface AnnouncementDTO {
+  id: string;
   title: string;
-  description: string;
-  fullDescription?: string;
-  date: string;
   category: string;
-  author: string;
+  content: string;
+  createdAt: string;
 }
 
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "long", day: "numeric", year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Page
+// -----------------------------------------------------------------------------
 export default function StudentMyHub() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedCard, setExpandedCard] = useState<number | null>(null);
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [announcements, setAnnouncements] = useState<AnnouncementDTO[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Admin Announcements (Project Announcements)
-  // TODO: Connect to backend API for admin announcements
-  const adminAnnouncements: FeedItem[] = [
-    {
-      id: 1,
-      type: "project",
-      title: "TÜBİTAK 2209-A Support Programme Open",
-      description: "Applications are now open for undergraduate research project support.",
-      fullDescription: "Applications are now open for undergraduate research project support. The TÜBİTAK 2209-A programme provides funding for innovative student-led research projects. Students can apply individually or in teams. The deadline for submissions is April 30th, 2026. Successful applicants will receive up to 15,000 TL in funding, mentorship from faculty advisors, and access to research facilities. Projects must demonstrate originality, feasibility, and potential for scientific contribution.",
-      date: "March 20, 2026",
-      category: "TÜBİTAK",
-      author: "Admin"
-    },
-    {
-      id: 3,
-      type: "project",
-      title: "Teknofest 2026 Team Formation Deadline",
-      description: "Teams must be finalized by April 1st for Teknofest competition entries.",
-      fullDescription: "Teams must be finalized by April 1st for Teknofest competition entries. Teknofest is Turkey's premier aerospace and technology festival, featuring competitions in AI, robotics, autonomous systems, and more. Teams of 3-5 students are required. All team members must register on the official Teknofest portal. Competition categories include autonomous vehicles, smart transportation, agricultural technology, and satellite design. Winners receive scholarships, internship opportunities, and funding for prototype development.",
-      date: "March 18, 2026",
-      category: "Teknofest",
-      author: "Admin"
-    },
-    {
-      id: 5,
-      type: "project",
-      title: "Spring Semester Course Projects Announced",
-      description: "New course project topics are available for CS401 and CS402.",
-      fullDescription: "New course project topics are available for CS401 (Advanced Software Engineering) and CS402 (Machine Learning Applications). Students must form teams of 2-4 members and select a project topic by March 28th. CS401 projects focus on full-stack web development, microservices architecture, and DevOps practices. CS402 projects involve building ML models for real-world applications such as image recognition, natural language processing, or predictive analytics. All projects require weekly progress reports and a final presentation in May.",
-      date: "March 15, 2026",
-      category: "Course",
-      author: "Admin"
-    },
-  ];
+  // ---------------------------------------------------------------------------
+  // Fetcher — /api/admin/announcements is a public endpoint, but the layout
+  // already guarantees a logged-in student is rendering this page, so we
+  // attach the bearer token defensively.
+  // ---------------------------------------------------------------------------
+  const fetchAnnouncements = useCallback(async () => {
+    const token = getToken();
+    const res = await fetch(`${API_URL}/admin/announcements`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`Announcements fetch failed (${res.status})`);
+    const data = (await res.json()) as { announcements: AnnouncementDTO[] };
+    setAnnouncements(data.announcements ?? []);
+  }, []);
 
-  // Filter based on search
-  const filteredAnnouncements = adminAnnouncements.filter(item =>
-    searchQuery === "" ||
-    item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        await fetchAnnouncements();
+      } catch (err) {
+        console.error("Hub load failed:", err);
+        toast.error(err instanceof Error ? err.message : "Failed to load announcements");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [fetchAnnouncements]);
 
-  const toggleExpand = (id: number) => {
+  // ---------------------------------------------------------------------------
+  // Derived data
+  // ---------------------------------------------------------------------------
+  const filteredAnnouncements = useMemo(() => announcements.filter(item => {
+    const q = searchQuery.toLowerCase();
+    return searchQuery === "" ||
+      item.title.toLowerCase().includes(q) ||
+      item.content.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q);
+  }), [announcements, searchQuery]);
+
+  const toggleExpand = (id: string) => {
     setExpandedCard(expandedCard === id ? null : id);
   };
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <div className="p-8">
+      <Toaster position="bottom-right" />
+
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-4xl font-bold text-white mb-2">My Hub</h1>
@@ -87,71 +120,87 @@ export default function StudentMyHub() {
         </div>
       </div>
 
+      {/* Loading State */}
+      {loading && (
+        <div className="text-center py-20">
+          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto"></div>
+        </div>
+      )}
+
       {/* Feed Grid */}
-      <div className="grid grid-cols-1 gap-6 max-w-5xl">
-        {filteredAnnouncements.map((item) => {
-          const isExpanded = expandedCard === item.id;
+      {!loading && (
+        <div className="grid grid-cols-1 gap-6 max-w-5xl">
+          {filteredAnnouncements.map((item) => {
+            const isExpanded = expandedCard === item.id;
+            const preview = item.content.length > 160
+              ? `${item.content.slice(0, 160).trimEnd()}...`
+              : item.content;
 
-          return (
-            <div
-              key={item.id}
-              className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-10 hover:bg-white/15 transition-all duration-500 ease-in-out"
-              style={{
-                maxHeight: isExpanded ? "1000px" : "320px",
-                overflow: "hidden",
-                transitionProperty: "max-height",
-                transitionDuration: "500ms",
-                transitionTimingFunction: "cubic-bezier(0.4, 0, 0.2, 1)"
-              }}
-            >
-              {/* Category Badge */}
-              <div className="flex items-center justify-between mb-4">
-                <span className="px-5 py-2 bg-blue-500/20 backdrop-blur-sm text-blue-200 rounded-full text-sm font-medium border border-blue-400/30">
-                  {item.category}
-                </span>
-                <span className="text-white/50 text-sm">{item.date}</span>
-              </div>
-
-              {/* Title */}
-              <h3 className="text-2xl font-bold text-white mb-4">{item.title}</h3>
-
-              {/* Description */}
-              <p className="text-white/70 text-lg leading-relaxed mb-6">
-                {isExpanded ? item.fullDescription : item.description}
-              </p>
-
-              {/* Author */}
-              <p className="text-white/50 text-sm mb-6">Posted by {item.author}</p>
-
-              {/* View Details Button */}
-              <button
-                type="button"
-                onClick={() => toggleExpand(item.id)}
-                className="flex items-center space-x-2 px-6 py-3 bg-white/90 hover:bg-white text-gray-900 rounded-full font-semibold transition-all shadow-lg hover:shadow-xl"
-                aria-expanded={isExpanded}
-                aria-label={isExpanded ? "Show less details" : "Show more details"}
+            return (
+              <div
+                key={item.id}
+                className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-10 hover:bg-white/15 transition-all duration-500 ease-in-out"
+                style={{
+                  maxHeight: isExpanded ? "1000px" : "320px",
+                  overflow: "hidden",
+                  transitionProperty: "max-height",
+                  transitionDuration: "500ms",
+                  transitionTimingFunction: "cubic-bezier(0.4, 0, 0.2, 1)"
+                }}
               >
-                {isExpanded ? (
-                  <>
-                    <ChevronUp className="w-4 h-4" strokeWidth={2.5} />
-                    <span>Show Less</span>
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown className="w-4 h-4" strokeWidth={2.5} />
-                    <span>View Details</span>
-                  </>
-                )}
-              </button>
-            </div>
-          );
-        })}
-      </div>
+                {/* Category Badge */}
+                <div className="flex items-center justify-between mb-4">
+                  <span className="px-5 py-2 bg-blue-500/20 backdrop-blur-sm text-blue-200 rounded-full text-sm font-medium border border-blue-400/30">
+                    {item.category}
+                  </span>
+                  <span className="text-white/50 text-sm">{formatDate(item.createdAt)}</span>
+                </div>
+
+                {/* Title */}
+                <h3 className="text-2xl font-bold text-white mb-4">{item.title}</h3>
+
+                {/* Description — preview when collapsed, full content when expanded */}
+                <p className="text-white/70 text-lg leading-relaxed mb-6">
+                  {isExpanded ? item.content : preview}
+                </p>
+
+                {/* Author */}
+                <p className="text-white/50 text-sm mb-6">Posted by Admin</p>
+
+                {/* View Details Button */}
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(item.id)}
+                  className="flex items-center space-x-2 px-6 py-3 bg-white/90 hover:bg-white text-gray-900 rounded-full font-semibold transition-all shadow-lg hover:shadow-xl"
+                  aria-expanded={isExpanded}
+                  aria-label={isExpanded ? "Show less details" : "Show more details"}
+                >
+                  {isExpanded ? (
+                    <>
+                      <ChevronUp className="w-4 h-4" strokeWidth={2.5} />
+                      <span>Show Less</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-4 h-4" strokeWidth={2.5} />
+                      <span>View Details</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Empty State */}
-      {filteredAnnouncements.length === 0 && (
+      {!loading && filteredAnnouncements.length === 0 && (
         <div className="text-center py-20">
-          <p className="text-white/50 text-lg">No announcements found</p>
+          <p className="text-white/50 text-lg">
+            {announcements.length === 0
+              ? "No announcements yet"
+              : "No announcements match your search"}
+          </p>
         </div>
       )}
     </div>

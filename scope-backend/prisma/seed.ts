@@ -42,12 +42,12 @@ async function main() {
   // 2. Advisors (5+)
   console.log('🎓 Creating 6 advisors...');
   const advisorData = [
-    { email: 'advisor1@scope.edu', name: 'Dr. Ayşe Kaya', title: 'Assoc. Prof.', dep: 'Computer Eng', exp: ['Machine Learning', 'NLP'] },
-    { email: 'advisor2@scope.edu', name: 'Prof. Mehmet Demir', title: 'Professor', dep: 'Software Eng', exp: ['Cloud Computing', 'Microservices'] },
-    { email: 'advisor3@scope.edu', name: 'Dr. Elif Şahin', title: 'Assoc. Prof.', dep: 'Bioengineering', exp: ['Bioinformatics', 'Genomics'] },
-    { email: 'advisor4@scope.edu', name: 'Dr. Ahmet Yılmaz', title: 'Asst. Prof.', dep: 'Cybersecurity', exp: ['Cryptography', 'Network Security'] },
-    { email: 'advisor5@scope.edu', name: 'Dr. Zeynep Arslan', title: 'Asst. Prof.', dep: 'Electrical Eng', exp: ['Robotics', 'IoT'] },
-    { email: 'advisor6@scope.edu', name: 'Prof. Burak Can', title: 'Professor', dep: 'Computer Eng', exp: ['Game Development', 'Computer Graphics'] },
+    { email: 'advisor1@adv.uskudar.edu.tr', name: 'Dr. Ayşe Kaya', title: 'Assoc. Prof.', dep: 'Computer Eng', exp: ['Machine Learning', 'NLP'] },
+    { email: 'advisor2@adv.uskudar.edu.tr', name: 'Prof. Mehmet Demir', title: 'Professor', dep: 'Software Eng', exp: ['Cloud Computing', 'Microservices'] },
+    { email: 'advisor3@adv.uskudar.edu.tr', name: 'Dr. Elif Şahin', title: 'Assoc. Prof.', dep: 'Bioengineering', exp: ['Bioinformatics', 'Genomics'] },
+    { email: 'advisor4@adv.uskudar.edu.tr', name: 'Dr. Ahmet Yılmaz', title: 'Asst. Prof.', dep: 'Cybersecurity', exp: ['Cryptography', 'Network Security'] },
+    { email: 'advisor5@adv.uskudar.edu.tr', name: 'Dr. Zeynep Arslan', title: 'Asst. Prof.', dep: 'Electrical Eng', exp: ['Robotics', 'IoT'] },
+    { email: 'advisor6@adv.uskudar.edu.tr', name: 'Prof. Burak Can', title: 'Professor', dep: 'Computer Eng', exp: ['Game Development', 'Computer Graphics'] },
   ];
 
   const advisors = [];
@@ -69,7 +69,7 @@ async function main() {
   for (let i = 1; i <= 25; i++) {
     const user = await prisma.user.create({
       data: {
-        email: `student${i}@scope.edu`, password, name: `Student ${i}`, role: 'STUDENT',
+        email: `student${i}@st.uskudar.edu.tr`, password, name: `Student ${i}`, role: 'STUDENT',
         studentProfile: {
           create: {
             year: i % 2 === 0 ? '4th Year' : '3rd Year',
@@ -84,7 +84,7 @@ async function main() {
   }
 
   // Admin
-  await prisma.user.create({ data: { email: 'admin@scope.edu', password, name: 'System Admin', role: 'ADMIN' } });
+  await prisma.user.create({ data: { email: 'admin@ad.uskudar.edu.tr', password, name: 'System Admin', role: 'ADMIN' } });
 
   // 4. Projects (10+)
   console.log('📁 Creating 12 projects...');

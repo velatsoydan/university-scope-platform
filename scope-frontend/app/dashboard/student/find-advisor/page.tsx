@@ -1,207 +1,306 @@
 "use client";
 
-import { useState } from "react";
-import { Search, Send, X, Check, AlertCircle, CheckCircle2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Search, Send, X, AlertCircle, CheckCircle2 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
 
-interface Advisor {
-  id: number;
+// -----------------------------------------------------------------------------
+// API base — env var holds the host (no /api suffix); endpoints below prepend
+// /api explicitly to stay consistent with the rest of the app.
+// -----------------------------------------------------------------------------
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api`;
+
+// -----------------------------------------------------------------------------
+// Types — derived from prisma/schema.prisma
+// -----------------------------------------------------------------------------
+type AdvisorAvailability = "available" | "unavailable";
+
+interface AdvisorDTO {
+  id: string;
+  name: string;
+  email: string;
+  advisorProfile: {
+    title: string | null;
+    department: string | null;
+    isAvailable: boolean;
+    expertise: string[];
+    researchInterests: string[];
+  } | null;
+}
+
+interface AdvisorRequestSummary {
+  id: string;
+  advisorId: string;
+  status: "PENDING" | "ACCEPTED" | "REJECTED";
+}
+
+interface MyProjectDTO {
+  id: string;
+  title: string;
+  status: string;
+  ownerId: string;
+  advisorRequests: AdvisorRequestSummary[];
+}
+
+// UI-shaped advisor for rendering
+interface AdvisorVM {
+  id: string;
   name: string;
   title: string;
   department: string;
   expertise: string[];
-  availability: "available" | "limited" | "unavailable";
+  availability: AdvisorAvailability;
 }
 
-interface Project {
-  id: number;
-  title: string;
-  status: string;
-  requestedAdvisors?: number[]; // Track which advisors have pending requests
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
 }
 
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function getCurrentUserId(): string | null {
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const payload = token.split(".")[1];
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    return (JSON.parse(atob(base64)) as { userId?: string }).userId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function humanizeStatus(s: string): string {
+  switch (s) {
+    case "PENDING_ADVISOR": return "Pending Advisor";
+    case "ADVISOR_ASSIGNED": return "Advisor Assigned";
+    case "IN_PROGRESS": return "In Progress";
+    case "REVIEW_PHASE": return "Review Phase";
+    case "COMPLETED": return "Completed";
+    case "DRAFT": return "Draft";
+    default: return s;
+  }
+}
+
+function toAdvisorVM(a: AdvisorDTO): AdvisorVM {
+  const p = a.advisorProfile;
+  return {
+    id: a.id,
+    name: a.name,
+    title: p?.title ?? "—",
+    department: p?.department ?? "—",
+    expertise: p?.expertise ?? [],
+    // Backend AdvisorProfile.isAvailable is a boolean; the design supports a
+    // third "limited" state that we have no data source for, so we collapse
+    // to a clean binary mapping.
+    availability: p?.isAvailable ? "available" : "unavailable",
+  };
+}
+
+// -----------------------------------------------------------------------------
+// Page
+// -----------------------------------------------------------------------------
 export default function StudentFindAdvisor() {
+  const router = useRouter();
+
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedExpertise, setSelectedExpertise] = useState<string[]>([]);
-  const [showRequestModal, setShowRequestModal] = useState(false);
-  const [selectedAdvisor, setSelectedAdvisor] = useState<Advisor | null>(null);
-  const [selectedProject, setSelectedProject] = useState<number | null>(null);
-  const [showToast, setShowToast] = useState(false);
-  const [showErrorToast, setShowErrorToast] = useState(false);
   const [availableOnlyFilter, setAvailableOnlyFilter] = useState(false);
 
-  // Mock projects with requested advisors tracking
-  const [myProjects, setMyProjects] = useState<Project[]>([
-    {
-      id: 1,
-      title: "AI-Powered Study Assistant",
-      status: "Pending Advisor",
-      requestedAdvisors: [1] // Already requested from advisor with id 1
-    },
-    {
-      id: 2,
-      title: "Campus Event Management Platform",
-      status: "Pending Advisor",
-      requestedAdvisors: []
+  const [showRequestModal, setShowRequestModal] = useState(false);
+  const [selectedAdvisor, setSelectedAdvisor] = useState<AdvisorVM | null>(null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+
+  const [advisors, setAdvisors] = useState<AdvisorVM[]>([]);
+  const [myProjects, setMyProjects] = useState<MyProjectDTO[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  const currentUserId = useMemo(() => getCurrentUserId(), []);
+
+  // ---------------------------------------------------------------------------
+  // Fetchers
+  // ---------------------------------------------------------------------------
+  const fetchAdvisors = useCallback(async () => {
+    const res = await fetch(`${API_URL}/advisors`, { headers: authHeaders(), cache: "no-store" });
+    if (!res.ok) throw new Error(`Advisors fetch failed (${res.status})`);
+    const data = (await res.json()) as { advisors: AdvisorDTO[] };
+    setAdvisors((data.advisors ?? []).map(toAdvisorVM));
+  }, []);
+
+  const fetchMyProjects = useCallback(async () => {
+    const res = await fetch(`${API_URL}/projects/my-projects`, {
+      headers: authHeaders(), cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`My projects fetch failed (${res.status})`);
+    const data = (await res.json()) as { projects: MyProjectDTO[] };
+    // Only projects the student OWNS can be sent to an advisor; team-only
+    // memberships can't initiate an advisor request.
+    setMyProjects((data.projects ?? []).filter(p => p.ownerId === currentUserId));
+  }, [currentUserId]);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      router.push("/login/student");
+      return;
     }
-  ]);
+    (async () => {
+      setLoading(true);
+      try {
+        await Promise.all([fetchAdvisors(), fetchMyProjects()]);
+      } catch (err) {
+        console.error("Find-advisor load failed:", err);
+        const message = err instanceof Error ? err.message : "Failed to load data";
+        if (/401|403/.test(message)) {
+          localStorage.removeItem("token");
+          router.push("/login/student");
+          return;
+        }
+        toast.error(message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [router, fetchAdvisors, fetchMyProjects]);
 
-  // Mock advisor data
-  // TODO: Connect to backend API for fetching available advisors
-  const advisors: Advisor[] = [
-    {
-      id: 1,
-      name: "Prof. Dr. Ayşe Yılmaz",
-      title: "Professor",
-      department: "Computer Engineering",
-      expertise: ["Machine Learning", "AI", "Computer Vision"],
-      availability: "available"
-    },
-    {
-      id: 2,
-      name: "Assoc. Prof. Mehmet Kaya",
-      title: "Associate Professor",
-      department: "Software Engineering",
-      expertise: ["Web Development", "Cloud Computing", "DevOps"],
-      availability: "limited"
-    },
-    {
-      id: 3,
-      name: "Dr. Zeynep Demir",
-      title: "Assistant Professor",
-      department: "Data Science",
-      expertise: ["Data Analytics", "Big Data", "IoT"],
-      availability: "available"
-    },
-    {
-      id: 4,
-      name: "Prof. Dr. Can Özkan",
-      title: "Professor",
-      department: "Robotics",
-      expertise: ["Robotics", "Embedded Systems", "Control Systems"],
-      availability: "unavailable"
-    },
-    {
-      id: 5,
-      name: "Dr. Elif Şahin",
-      title: "Assistant Professor",
-      department: "Computer Engineering",
-      expertise: ["Mobile Development", "UI/UX", "Human-Computer Interaction"],
-      availability: "available"
-    },
-  ];
+  // ---------------------------------------------------------------------------
+  // Derived data
+  // ---------------------------------------------------------------------------
+  // Expertise chip list — derived from the union of every advisor's expertise
+  // so the filter actually reflects what's in the DB instead of a stale hardcoded list.
+  const expertiseOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of advisors) for (const exp of a.expertise) set.add(exp);
+    return Array.from(set).sort();
+  }, [advisors]);
 
-  // All expertise options for filters
-  const expertiseOptions = [
-    "Machine Learning",
-    "AI",
-    "Web Development",
-    "Mobile Development",
-    "Robotics",
-    "Data Analytics",
-    "IoT",
-    "Cloud Computing"
-  ];
-
-  // Filter advisors
-  const filteredAdvisors = advisors.filter(advisor => {
-    // Search filter
+  const filteredAdvisors = useMemo(() => advisors.filter(advisor => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch = searchQuery === "" ||
-      advisor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      advisor.department.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      advisor.expertise.some(exp => exp.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    // Expertise filter
+      advisor.name.toLowerCase().includes(q) ||
+      advisor.department.toLowerCase().includes(q) ||
+      advisor.expertise.some(exp => exp.toLowerCase().includes(q));
     const matchesExpertise = selectedExpertise.length === 0 ||
       selectedExpertise.some(exp => advisor.expertise.includes(exp));
-
-    // Availability filter (only when toggle is ON)
-    const matchesAvailability = !availableOnlyFilter || 
-      (advisor.availability === "available" || advisor.availability === "limited");
-
+    const matchesAvailability = !availableOnlyFilter || advisor.availability === "available";
     return matchesSearch && matchesExpertise && matchesAvailability;
-  });
+  }), [advisors, searchQuery, selectedExpertise, availableOnlyFilter]);
 
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
   const toggleExpertise = (expertise: string) => {
     setSelectedExpertise(prev =>
       prev.includes(expertise) ? prev.filter(e => e !== expertise) : [...prev, expertise]
     );
   };
 
-  const getAvailabilityColor = (status: string) => {
+  const getAvailabilityColor = (status: AdvisorAvailability) => {
     switch (status) {
-      case "available":
-        return "bg-green-400";
-      case "limited":
-        return "bg-yellow-400";
-      case "unavailable":
-        return "bg-red-400";
-      default:
-        return "bg-gray-400";
+      case "available": return "bg-green-400";
+      case "unavailable": return "bg-red-400";
+      default: return "bg-gray-400";
     }
   };
 
-  const getAvailabilityText = (status: string) => {
+  const getAvailabilityText = (status: AdvisorAvailability) => {
     switch (status) {
-      case "available":
-        return "Available";
-      case "limited":
-        return "Limited Availability";
-      case "unavailable":
-        return "Unavailable";
-      default:
-        return "Unknown";
+      case "available": return "Available";
+      case "unavailable": return "Unavailable";
+      default: return "Unknown";
     }
   };
 
-  const handleSendRequest = (advisor: Advisor) => {
+  const handleSendRequest = (advisor: AdvisorVM) => {
     setSelectedAdvisor(advisor);
     setSelectedProject(null);
     setShowRequestModal(true);
   };
 
-  const handleSubmitRequest = () => {
+  const hasRequestToAdvisor = (project: MyProjectDTO, advisorId: string): boolean => {
+    return project.advisorRequests.some(r => r.advisorId === advisorId);
+  };
+
+  const handleSubmitRequest = async () => {
     if (myProjects.length === 0) {
       setShowRequestModal(false);
       toast.error("No Projects Found", {
         description: "Please create a project first before sending advisor requests.",
         duration: 4000,
-        className: "bg-red-500/90 backdrop-blur-xl text-white border-red-400/50"
+        className: "bg-red-500/90 backdrop-blur-xl text-white border-red-400/50",
       });
       return;
     }
 
-    if (!selectedProject || !selectedAdvisor) {
-      return;
+    if (!selectedProject || !selectedAdvisor) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API_URL}/advisors/request`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          projectId: selectedProject,
+          advisorId: selectedAdvisor.id,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+
+      const advisorName = selectedAdvisor.name;
+      setShowRequestModal(false);
+      setSelectedProject(null);
+      setSelectedAdvisor(null);
+
+      // Refresh my-projects so the "Request Already Sent" badge appears next time.
+      await fetchMyProjects();
+
+      toast.success("Request Sent!", {
+        description: `Your request has been sent to ${advisorName}.`,
+        duration: 4000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+      });
+    } catch (err) {
+      console.error("Send advisor request failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to send request");
+    } finally {
+      setSubmitting(false);
     }
-
-    // Update the project to add this advisor to requestedAdvisors
-    setMyProjects(myProjects.map(project => 
-      project.id === selectedProject 
-        ? { ...project, requestedAdvisors: [...(project.requestedAdvisors || []), selectedAdvisor.id] }
-        : project
-    ));
-
-    setShowRequestModal(false);
-    setSelectedProject(null);
-    
-    toast.success("Request Sent!", {
-      description: `Your request has been sent to ${selectedAdvisor.name}.`,
-      duration: 4000,
-      className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
-    });
   };
 
-  // Check if a project already has a request to a specific advisor
-  const hasRequestToAdvisor = (project: Project, advisorId: number): boolean => {
-    return project.requestedAdvisors?.includes(advisorId) || false;
-  };
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  if (loading) {
+    return (
+      <div className="p-8">
+        <div className="text-center py-20">
+          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8">
       <Toaster position="bottom-right" />
-      
+
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-4xl font-bold text-white mb-2">Find Advisor</h1>
@@ -221,7 +320,7 @@ export default function StudentFindAdvisor() {
               className="w-full pl-16 pr-6 py-5 bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[40px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 focus:border-white/40 transition-all text-lg"
             />
           </div>
-          
+
           {/* Available Toggle Filter */}
           <div className="flex items-center space-x-3 px-6 py-4 bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[40px]">
             <span className="text-white/70 text-sm font-semibold">Available Only</span>
@@ -233,10 +332,10 @@ export default function StudentFindAdvisor() {
                   : "bg-white/20"
               }`}
             >
-              <div 
+              <div
                 className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-lg transition-all duration-300 ${
                   availableOnlyFilter ? "right-0.5" : "left-0.5"
-                }`} 
+                }`}
               />
             </button>
           </div>
@@ -244,24 +343,26 @@ export default function StudentFindAdvisor() {
       </div>
 
       {/* Expertise Filters */}
-      <div className="mb-8">
-        <p className="text-white/70 text-sm font-semibold mb-3 ml-2">Filter by Expertise</p>
-        <div className="flex flex-wrap gap-3">
-          {expertiseOptions.map((expertise) => (
-            <button
-              key={expertise}
-              onClick={() => toggleExpertise(expertise)}
-              className={`px-5 py-3 backdrop-blur-sm rounded-full text-sm font-medium border transition-all ${
-                selectedExpertise.includes(expertise)
-                  ? "bg-blue-500/30 text-blue-200 border-blue-400/50 shadow-lg"
-                  : "bg-white/10 text-white/70 border-white/20 hover:bg-white/20"
-              }`}
-            >
-              {expertise}
-            </button>
-          ))}
+      {expertiseOptions.length > 0 && (
+        <div className="mb-8">
+          <p className="text-white/70 text-sm font-semibold mb-3 ml-2">Filter by Expertise</p>
+          <div className="flex flex-wrap gap-3">
+            {expertiseOptions.map((expertise) => (
+              <button
+                key={expertise}
+                onClick={() => toggleExpertise(expertise)}
+                className={`px-5 py-3 backdrop-blur-sm rounded-full text-sm font-medium border transition-all ${
+                  selectedExpertise.includes(expertise)
+                    ? "bg-blue-500/30 text-blue-200 border-blue-400/50 shadow-lg"
+                    : "bg-white/10 text-white/70 border-white/20 hover:bg-white/20"
+                }`}
+              >
+                {expertise}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Advisors Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -333,7 +434,6 @@ export default function StudentFindAdvisor() {
       {showRequestModal && selectedAdvisor && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-6 animate-fadeIn">
           <div className="bg-white/15 backdrop-blur-2xl rounded-[60px] border border-white/30 p-12 max-w-2xl w-full shadow-2xl animate-slideUp">
-            {/* Modal Header */}
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-3xl font-bold text-white">Select Project</h2>
               <button
@@ -359,7 +459,6 @@ export default function StudentFindAdvisor() {
                   <div className="space-y-3">
                     {myProjects.map((project) => {
                       const alreadyRequested = hasRequestToAdvisor(project, selectedAdvisor.id);
-                      
                       return (
                         <label
                           key={project.id}
@@ -387,7 +486,7 @@ export default function StudentFindAdvisor() {
                                 </span>
                               )}
                             </div>
-                            <p className="text-white/50 text-sm mt-1">{project.status}</p>
+                            <p className="text-white/50 text-sm mt-1">{humanizeStatus(project.status)}</p>
                           </div>
                         </label>
                       );
@@ -398,18 +497,17 @@ export default function StudentFindAdvisor() {
                 {/* Submit Button */}
                 <button
                   onClick={handleSubmitRequest}
-                  disabled={!selectedProject}
+                  disabled={!selectedProject || submitting}
                   className={`w-full px-8 py-5 rounded-[30px] font-bold text-lg transition-all ${
-                    selectedProject
+                    selectedProject && !submitting
                       ? "bg-white hover:bg-white/95 text-gray-900 shadow-2xl hover:shadow-xl cursor-pointer"
                       : "bg-white/20 text-white/40 cursor-not-allowed"
                   }`}
                 >
-                  Send Request
+                  {submitting ? "Sending..." : "Send Request"}
                 </button>
               </>
             ) : (
-              // Error State - No Projects
               <div className="text-center py-8">
                 <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
                   <AlertCircle className="w-10 h-10 text-red-300" strokeWidth={2} />

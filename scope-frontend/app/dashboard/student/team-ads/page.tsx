@@ -1,121 +1,168 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Search, ChevronDown, ChevronUp, X, Check } from "lucide-react";
+import { toast, Toaster } from "sonner";
 
-interface TeamAd {
-  id: number;
-  type: "team";
+// -----------------------------------------------------------------------------
+// API base — env var holds the host (no /api suffix); endpoints below prepend
+// /api explicitly to stay consistent with the rest of the app.
+// -----------------------------------------------------------------------------
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api`;
+
+// -----------------------------------------------------------------------------
+// Types — derived from prisma/schema.prisma (TeamAd + Project + relations)
+// -----------------------------------------------------------------------------
+type ApplicationStatus = "PENDING" | "ACCEPTED" | "REJECTED";
+
+interface TeamAdDTO {
+  id: string;
+  projectId: string;
   title: string;
   description: string;
-  fullDescription?: string;
-  date: string;
-  category: string;
-  author: string;
-  projectType: "Mobile" | "AI" | "Web" | "Robotics";
+  fullDescription: string | null;
+  projectType: string | null;
   technicalSkills: string[];
   interests: string[];
+  createdAt: string;
+  author: { id: string; name: string };
+  project: {
+    id: string;
+    status: string;
+    category: { id: string; name: string } | null;
+    _count: { teamMembers: number };
+    applications: Array<{ id: string; status: ApplicationStatus }>;
+  };
 }
 
-export default function StudentTeamAds() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [expandedCard, setExpandedCard] = useState<number | null>(null);
-  const [showApplyModal, setShowApplyModal] = useState(false);
-  const [selectedProject, setSelectedProject] = useState<TeamAd | null>(null);
-  const [showToast, setShowToast] = useState(false);
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
 
-  // Filter states
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "long", day: "numeric", year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+// The UI was originally typed against a strict 4-value union; we relax that and
+// just show whatever the DB has, falling back to "General" if the project type
+// is null on a particular ad.
+function adProjectType(ad: TeamAdDTO): string {
+  return ad.projectType ?? ad.project.category?.name ?? "General";
+}
+
+// -----------------------------------------------------------------------------
+// Page
+// -----------------------------------------------------------------------------
+export default function StudentTeamAds() {
+  const router = useRouter();
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  const [selectedAd, setSelectedAd] = useState<TeamAdDTO | null>(null);
+
   const [selectedProjectTypes, setSelectedProjectTypes] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-
-  // Role selection for application
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
 
-  // Track applied projects
-  const [appliedProjects, setAppliedProjects] = useState<Set<number>>(new Set());
+  const [teamAds, setTeamAds] = useState<TeamAdDTO[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Team Ads (Student Announcements)
-  // TODO: Connect to backend API for team advertisements
-  const teamAds: TeamAd[] = [
-    {
-      id: 2,
-      type: "team",
-      title: "Looking for ML Engineer - AI Agriculture Project",
-      description: "We're building a smart agriculture system and need someone with Python/TensorFlow experience.",
-      fullDescription: "We're building a smart agriculture system and need someone with Python/TensorFlow experience. Our project aims to develop an AI-powered crop disease detection system using drone imagery and machine learning. The system will help farmers identify plant diseases early, reducing crop loss and optimizing pesticide use. We need a team member who can work on computer vision models, data preprocessing, and model deployment. Experience with convolutional neural networks and transfer learning is a plus. This is a TÜBİTAK-funded project with opportunities for publication.",
-      date: "March 19, 2026",
-      category: "Team Search",
-      author: "Ali Yılmaz",
-      projectType: "AI",
-      technicalSkills: ["Python", "TensorFlow", "Machine Learning"],
-      interests: ["AI", "Agriculture", "IoT"]
-    },
-    {
-      id: 4,
-      type: "team",
-      title: "Frontend Developer Needed for E-Commerce Platform",
-      description: "Join our team to build a modern React-based e-commerce solution.",
-      fullDescription: "Join our team to build a modern React-based e-commerce solution. We're developing a full-featured online marketplace with advanced features like real-time inventory management, AI-powered product recommendations, and seamless payment integration. Looking for a frontend developer skilled in React, TypeScript, and modern CSS frameworks. You'll be responsible for building responsive UI components, implementing state management with Redux, and ensuring optimal performance. Experience with Next.js and Tailwind CSS is highly valued. This is a course project for CS401 with potential for real-world deployment.",
-      date: "March 17, 2026",
-      category: "Team Search",
-      author: "Elif Çelik",
-      projectType: "Web",
-      technicalSkills: ["React", "TypeScript", "Tailwind CSS"],
-      interests: ["Web Development", "E-Commerce", "UI/UX"]
-    },
-    {
-      id: 6,
-      type: "team",
-      title: "Robotics Engineer for Autonomous Drone Project",
-      description: "Looking for team members with experience in robotics and embedded systems.",
-      fullDescription: "Looking for team members with experience in robotics and embedded systems. We're building an autonomous delivery drone for Teknofest 2026 competition. The project involves hardware design, sensor integration (GPS, IMU, cameras), path planning algorithms, and obstacle avoidance. We need someone with strong C++ skills, ROS (Robot Operating System) experience, and knowledge of Arduino/Raspberry Pi. You'll work on flight control systems, computer vision for object detection, and real-time decision-making. Previous experience with drone projects or embedded systems is essential. Team currently has 3 members.",
-      date: "March 14, 2026",
-      category: "Team Search",
-      author: "Can Özkan",
-      projectType: "Robotics",
-      technicalSkills: ["C++", "ROS", "Arduino", "Computer Vision"],
-      interests: ["Robotics", "Drones", "Embedded Systems"]
-    },
-    {
-      id: 7,
-      type: "team",
-      title: "Mobile Developer for Health & Fitness App",
-      description: "Building a cross-platform fitness tracking app with AI-powered workout recommendations.",
-      fullDescription: "Building a cross-platform fitness tracking app with AI-powered workout recommendations. We're creating a comprehensive health and fitness platform that tracks workouts, nutrition, sleep patterns, and provides personalized coaching. Looking for a mobile developer with React Native or Flutter experience. You'll be responsible for implementing user authentication, data visualization, push notifications, and integrating with wearable device APIs. Experience with health data APIs (Apple HealthKit, Google Fit) is a plus. This project is part of the Spring semester course and has potential for commercialization.",
-      date: "March 13, 2026",
-      category: "Team Search",
-      author: "Zeynep Kara",
-      projectType: "Mobile",
-      technicalSkills: ["React Native", "Flutter", "Firebase"],
-      interests: ["Mobile Development", "Health Tech", "UI/UX"]
-    },
-  ];
-
-  // Available filters
-  const projectTypes = ["Mobile", "AI", "Web", "Robotics"];
-  const skillsOptions = ["React", "Python", "C++", "TypeScript", "Machine Learning", "TensorFlow", "Arduino"];
+  // Roles a student can request — taxonomy lives in the UI since it isn't
+  // enforced by the schema (TeamMember.role and requestedRoles are free-form).
   const rolesOptions = ["Frontend", "Backend", "Designer", "ML Engineer", "DevOps"];
 
-  // Filter logic
-  const filteredTeamAds = teamAds.filter(item => {
-    // Search filter
+  // ---------------------------------------------------------------------------
+  // Fetchers
+  // ---------------------------------------------------------------------------
+  const fetchTeamAds = useCallback(async () => {
+    const res = await fetch(`${API_URL}/team-ads`, {
+      headers: authHeaders(), cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`Team ads fetch failed (${res.status})`);
+    const data = (await res.json()) as { teamAds: TeamAdDTO[] };
+    setTeamAds(data.teamAds ?? []);
+  }, []);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      router.push("/login/student");
+      return;
+    }
+    (async () => {
+      setLoading(true);
+      try {
+        await fetchTeamAds();
+      } catch (err) {
+        console.error("Team ads load failed:", err);
+        const message = err instanceof Error ? err.message : "Failed to load team ads";
+        if (/401|403/.test(message)) {
+          localStorage.removeItem("token");
+          router.push("/login/student");
+          return;
+        }
+        toast.error(message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [router, fetchTeamAds]);
+
+  // ---------------------------------------------------------------------------
+  // Derived data
+  // ---------------------------------------------------------------------------
+  // Build filter chips from the union of real data so categories actually
+  // match what the DB serves (mirrors the find-advisor convention).
+  const projectTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const ad of teamAds) set.add(adProjectType(ad));
+    return Array.from(set).sort();
+  }, [teamAds]);
+
+  const skillsOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const ad of teamAds) for (const s of ad.technicalSkills) set.add(s);
+    return Array.from(set).sort();
+  }, [teamAds]);
+
+  const filteredTeamAds = useMemo(() => teamAds.filter(ad => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch = searchQuery === "" ||
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.author.toLowerCase().includes(searchQuery.toLowerCase());
-
-    // Project type filter
+      ad.title.toLowerCase().includes(q) ||
+      ad.description.toLowerCase().includes(q) ||
+      ad.author.name.toLowerCase().includes(q);
     const matchesProjectType = selectedProjectTypes.length === 0 ||
-      selectedProjectTypes.includes(item.projectType);
-
-    // Skills filter
+      selectedProjectTypes.includes(adProjectType(ad));
     const matchesSkills = selectedSkills.length === 0 ||
-      selectedSkills.some(skill => item.technicalSkills.includes(skill));
-
+      selectedSkills.some(skill => ad.technicalSkills.includes(skill));
     return matchesSearch && matchesProjectType && matchesSkills;
-  });
+  }), [teamAds, searchQuery, selectedProjectTypes, selectedSkills]);
 
-  const toggleExpand = (id: number) => {
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
+  const toggleExpand = (id: string) => {
     setExpandedCard(expandedCard === id ? null : id);
   };
 
@@ -137,28 +184,72 @@ export default function StudentTeamAds() {
     );
   };
 
-  const handleApplyClick = (ad: TeamAd) => {
-    setSelectedProject(ad);
+  const handleApplyClick = (ad: TeamAdDTO) => {
+    setSelectedAd(ad);
     setSelectedRoles([]);
     setShowApplyModal(true);
   };
 
-  const handleSubmitApplication = () => {
-    if (selectedRoles.length === 0) return;
-
-    setShowApplyModal(false);
-    setShowToast(true);
-
-    setTimeout(() => {
-      setShowToast(false);
-    }, 4000);
-
-    // Add the project ID to the applied projects set
-    setAppliedProjects(prev => new Set([...prev, selectedProject!.id]));
+  const hasAppliedToAd = (ad: TeamAdDTO): boolean => {
+    return ad.project.applications.length > 0;
   };
+
+  const handleSubmitApplication = async () => {
+    if (!selectedAd || selectedRoles.length === 0) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API_URL}/applications/apply`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          projectId: selectedAd.projectId,
+          requestedRoles: selectedRoles,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+
+      setShowApplyModal(false);
+      setSelectedAd(null);
+      setSelectedRoles([]);
+
+      // Refresh so the "Applied" pill takes effect on the card.
+      await fetchTeamAds();
+
+      toast.success("Application Sent Successfully!", {
+        description: "The team will review your application soon",
+        duration: 4000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+      });
+    } catch (err) {
+      console.error("Apply failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to submit application");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  if (loading) {
+    return (
+      <div className="p-8">
+        <div className="text-center py-20">
+          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8">
+      <Toaster position="bottom-right" />
+
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-4xl font-bold text-white mb-2">Team Ads</h1>
@@ -181,53 +272,56 @@ export default function StudentTeamAds() {
 
       {/* Filter Chips */}
       <div className="mb-8 space-y-4">
-        {/* Project Type Filters */}
-        <div>
-          <p className="text-white/70 text-sm font-semibold mb-3 ml-2">Project Type</p>
-          <div className="flex flex-wrap gap-3">
-            {projectTypes.map((type) => (
-              <button
-                key={type}
-                onClick={() => toggleProjectType(type)}
-                className={`px-5 py-3 backdrop-blur-sm rounded-full text-sm font-medium border transition-all cursor-pointer ${selectedProjectTypes.includes(type)
-                  ? "bg-blue-500/30 text-blue-200 border-blue-400/50 shadow-lg"
-                  : "bg-white/10 text-white/70 border-white/20 hover:bg-white/20"
-                  }`}
-              >
-                {type}
-              </button>
-            ))}
+        {projectTypes.length > 0 && (
+          <div>
+            <p className="text-white/70 text-sm font-semibold mb-3 ml-2">Project Type</p>
+            <div className="flex flex-wrap gap-3">
+              {projectTypes.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => toggleProjectType(type)}
+                  className={`px-5 py-3 backdrop-blur-sm rounded-full text-sm font-medium border transition-all cursor-pointer ${selectedProjectTypes.includes(type)
+                    ? "bg-blue-500/30 text-blue-200 border-blue-400/50 shadow-lg"
+                    : "bg-white/10 text-white/70 border-white/20 hover:bg-white/20"
+                    }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Required Skills Filters */}
-        <div>
-          <p className="text-white/70 text-sm font-semibold mb-3 ml-2">Required Skills</p>
-          <div className="flex flex-wrap gap-3">
-            {skillsOptions.map((skill) => (
-              <button
-                key={skill}
-                onClick={() => toggleSkill(skill)}
-                className={`px-5 py-3 backdrop-blur-sm rounded-full text-sm font-medium border transition-all cursor-pointer ${selectedSkills.includes(skill)
-                  ? "bg-purple-500/30 text-purple-200 border-purple-400/50 shadow-lg"
-                  : "bg-white/10 text-white/70 border-white/20 hover:bg-white/20"
-                  }`}
-              >
-                {skill}
-              </button>
-            ))}
+        {skillsOptions.length > 0 && (
+          <div>
+            <p className="text-white/70 text-sm font-semibold mb-3 ml-2">Required Skills</p>
+            <div className="flex flex-wrap gap-3">
+              {skillsOptions.map((skill) => (
+                <button
+                  key={skill}
+                  onClick={() => toggleSkill(skill)}
+                  className={`px-5 py-3 backdrop-blur-sm rounded-full text-sm font-medium border transition-all cursor-pointer ${selectedSkills.includes(skill)
+                    ? "bg-purple-500/30 text-purple-200 border-purple-400/50 shadow-lg"
+                    : "bg-white/10 text-white/70 border-white/20 hover:bg-white/20"
+                    }`}
+                >
+                  {skill}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Feed Grid */}
       <div className="grid grid-cols-1 gap-6 max-w-5xl">
-        {filteredTeamAds.map((item) => {
-          const isExpanded = expandedCard === item.id;
+        {filteredTeamAds.map((ad) => {
+          const isExpanded = expandedCard === ad.id;
+          const alreadyApplied = hasAppliedToAd(ad);
 
           return (
             <div
-              key={item.id}
+              key={ad.id}
               className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-10 hover:bg-white/15 transition-all duration-500 ease-in-out"
               style={{
                 maxHeight: isExpanded ? "1200px" : "380px",
@@ -238,27 +332,27 @@ export default function StudentTeamAds() {
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-3">
                   <span className="px-5 py-2 bg-blue-500/20 backdrop-blur-sm text-blue-200 rounded-full text-sm font-medium border border-blue-400/30">
-                    {item.projectType}
+                    {adProjectType(ad)}
                   </span>
-                  <span className="text-white/50 text-sm">by {item.author}</span>
+                  <span className="text-white/50 text-sm">by {ad.author.name}</span>
                 </div>
-                <span className="text-white/50 text-sm">{item.date}</span>
+                <span className="text-white/50 text-sm">{formatDate(ad.createdAt)}</span>
               </div>
 
               {/* Title */}
-              <h3 className="text-2xl font-bold text-white mb-4">{item.title}</h3>
+              <h3 className="text-2xl font-bold text-white mb-4">{ad.title}</h3>
 
               {/* Description */}
               <p className="text-white/70 text-lg leading-relaxed mb-6">
-                {isExpanded ? item.fullDescription : item.description}
+                {isExpanded ? (ad.fullDescription ?? ad.description) : ad.description}
               </p>
 
               {/* Skills Tags */}
-              {isExpanded && (
+              {isExpanded && ad.technicalSkills.length > 0 && (
                 <div className="mb-6">
                   <p className="text-white/60 text-sm font-semibold mb-3">Required Skills:</p>
                   <div className="flex flex-wrap gap-2">
-                    {item.technicalSkills.map((skill, idx) => (
+                    {ad.technicalSkills.map((skill, idx) => (
                       <span
                         key={idx}
                         className="px-4 py-2 bg-purple-500/20 text-purple-200 rounded-full text-sm border border-purple-400/30"
@@ -273,7 +367,7 @@ export default function StudentTeamAds() {
               {/* Action Buttons */}
               <div className="flex items-center space-x-4">
                 <button
-                  onClick={() => toggleExpand(item.id)}
+                  onClick={() => toggleExpand(ad.id)}
                   className="flex items-center space-x-2 px-6 py-3 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-full font-semibold transition-all cursor-pointer"
                 >
                   {isExpanded ? (
@@ -290,7 +384,7 @@ export default function StudentTeamAds() {
                 </button>
 
                 {isExpanded && (
-                  appliedProjects.has(item.id) ? (
+                  alreadyApplied ? (
                     <button
                       disabled
                       className="flex items-center space-x-2 px-6 py-3 bg-blue-500/30 border border-blue-400/50 text-blue-200 rounded-full font-bold cursor-not-allowed"
@@ -300,7 +394,7 @@ export default function StudentTeamAds() {
                     </button>
                   ) : (
                     <button
-                      onClick={() => handleApplyClick(item)}
+                      onClick={() => handleApplyClick(ad)}
                       className="flex items-center space-x-2 px-6 py-3 bg-white/90 hover:bg-white text-gray-900 rounded-full font-bold transition-all shadow-lg hover:shadow-xl cursor-pointer"
                     >
                       <Check className="w-4 h-4" strokeWidth={2.5} />
@@ -322,10 +416,9 @@ export default function StudentTeamAds() {
       )}
 
       {/* Apply Modal */}
-      {showApplyModal && selectedProject && (
+      {showApplyModal && selectedAd && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-6 animate-fadeIn">
           <div className="bg-white/15 backdrop-blur-2xl rounded-[60px] border border-white/30 p-12 max-w-2xl w-full shadow-2xl animate-slideUp">
-            {/* Modal Header */}
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-3xl font-bold text-white">Select Your Role(s)</h2>
               <button
@@ -336,11 +429,11 @@ export default function StudentTeamAds() {
               </button>
             </div>
 
-            {/* Project Info */}
+            {/* Ad Info */}
             <div className="mb-8 p-6 bg-white/10 rounded-[40px] border border-white/20">
               <p className="text-white/60 text-sm mb-2">Applying to:</p>
-              <h3 className="text-xl font-bold text-white">{selectedProject.title}</h3>
-              <p className="text-white/50 text-sm mt-1">by {selectedProject.author}</p>
+              <h3 className="text-xl font-bold text-white">{selectedAd.title}</h3>
+              <p className="text-white/50 text-sm mt-1">by {selectedAd.author.name}</p>
             </div>
 
             {/* Role Selection */}
@@ -367,29 +460,14 @@ export default function StudentTeamAds() {
             {/* Submit Button */}
             <button
               onClick={handleSubmitApplication}
-              disabled={selectedRoles.length === 0}
-              className={`w-full px-8 py-5 rounded-[30px] font-bold text-lg transition-all cursor-pointer ${selectedRoles.length > 0
+              disabled={selectedRoles.length === 0 || submitting}
+              className={`w-full px-8 py-5 rounded-[30px] font-bold text-lg transition-all cursor-pointer ${selectedRoles.length > 0 && !submitting
                 ? "bg-white hover:bg-white/95 text-gray-900 shadow-2xl hover:shadow-xl"
                 : "bg-white/20 text-white/40 cursor-not-allowed"
                 }`}
             >
-              Submit Application
+              {submitting ? "Submitting..." : "Submit Application"}
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Success Toast */}
-      {showToast && (
-        <div className="fixed bottom-8 right-8 z-50 animate-slideInFromRight">
-          <div className="bg-blue-500/90 backdrop-blur-xl rounded-[30px] border border-blue-400/50 px-8 py-5 shadow-2xl flex items-center space-x-4">
-            <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-              <Check className="w-6 h-6 text-white" strokeWidth={2.5} />
-            </div>
-            <div>
-              <p className="text-white font-bold text-lg">Application Sent Successfully!</p>
-              <p className="text-white/80 text-sm">The team will review your application soon</p>
-            </div>
           </div>
         </div>
       )}

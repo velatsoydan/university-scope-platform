@@ -1,278 +1,425 @@
 "use client";
 
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Users, FolderKanban, LogOut, Plus, Search, X, Award, ChevronDown, Activity, CheckCircle, Pencil } from "lucide-react";
-import { useState, useEffect } from "react";
+import {
+  Users, FolderKanban, LogOut, Plus, Search, X, Award, ChevronDown,
+  Activity, CheckCircle, Pencil,
+} from "lucide-react";
 import { toast, Toaster } from "sonner";
 
-interface Announcement {
-  id: string;
-  title: string;
-  category: "TÜBİTAK" | "Teknofest" | "Course" | "General";
-  content: string;
-  createdDate: string;
-}
+// -----------------------------------------------------------------------------
+// API base — env var holds the host (no /api suffix); we append /api per call,
+// matching app/dashboard/student/profile/page.tsx convention.
+// -----------------------------------------------------------------------------
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api`;
 
-interface User {
+// -----------------------------------------------------------------------------
+// Types — derived from prisma/schema.prisma
+// -----------------------------------------------------------------------------
+type BackendRole = "STUDENT" | "INSTRUCTOR" | "ADMIN";
+type BackendUserStatus = "ACTIVE" | "INACTIVE";
+type BackendProjectStatus =
+  | "DRAFT" | "PENDING_ADVISOR" | "ADVISOR_ASSIGNED"
+  | "IN_PROGRESS" | "REVIEW_PHASE" | "COMPLETED";
+
+interface UserDTO {
   id: string;
+  name: string;
   email: string;
-  name: string;
-  role: "Student" | "Advisor";
-  status: "Active" | "Inactive";
-  joinedDate: string;
+  role: BackendRole;
+  status: BackendUserStatus;
+  createdAt: string;
 }
 
-interface Project {
+interface CategoryDTO {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+interface ProjectDTO {
   id: string;
   title: string;
-  owner: string;
-  status: "Draft" | "Active" | "Completed";
-  teamSize: number;
-  category: string;
-  techStack: string[];
+  description: string;
+  budget: string | null;
+  requiredSkills: string[];
+  status: BackendProjectStatus;
+  createdAt: string;
+  category: { id: string; name: string };
+  owner: { id: string; name: string };
+  advisor: { id: string; name: string; email: string } | null;
+  teamMembers: Array<{ id: string; userId: string; role: string }>;
 }
 
-interface Category {
+interface AnnouncementDTO {
   id: string;
-  name: string;
-  createdDate: string;
+  title: string;
+  category: string;
+  content: string;
+  createdAt: string;
 }
 
+// UI-level role label (3rd entry covers backend ADMIN users)
+type UIRole = "Student" | "Advisor" | "Admin";
+type UIRoleFilter = "All" | UIRole;
+type UIStatus = "Active" | "Inactive";
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
+
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function backendRoleToUI(role: BackendRole): UIRole {
+  switch (role) {
+    case "STUDENT": return "Student";
+    case "INSTRUCTOR": return "Advisor";
+    case "ADMIN": return "Admin";
+  }
+}
+
+function backendStatusToUI(s: BackendUserStatus): UIStatus {
+  return s === "ACTIVE" ? "Active" : "Inactive";
+}
+
+/** Buckets the 6 backend ProjectStatus values into the 3 the design supports. */
+function projectStatusBucket(s: BackendProjectStatus): "Draft" | "Active" | "Completed" {
+  if (s === "DRAFT") return "Draft";
+  if (s === "COMPLETED") return "Completed";
+  return "Active";
+}
+
+// -----------------------------------------------------------------------------
+// Page
+// -----------------------------------------------------------------------------
 export default function AdminDashboard() {
   const router = useRouter();
+
+  // UI toggles
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showEditCategoryModal, setShowEditCategoryModal] = useState(false);
-  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const [editCategoryName, setEditCategoryName] = useState("");
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+
+  // Search + filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
-  const [filterRole, setFilterRole] = useState<"All" | "Student" | "Advisor">("All");
-  const [filterCategory, setFilterCategory] = useState<"All" | "TÜBİTAK" | "Teknofest" | "Course">("All");
-  const [newCategoryName, setNewCategoryName] = useState("");
-
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    const role = localStorage.getItem("userRole");
-    if (!token || role !== "ADMIN") {
-      router.push("/login/admin");
-    }
-  }, [router]);
-
-  // Stats
-  const stats = {
-    totalUsers: 156,
-    activeProjects: 34,
-    teamMatches: 89,
-    advisorActivities: 23,
-    onlineUsers: 42
-  };
-
-  // Categories state
-  // TODO: Connect to backend API for categories
-  const [categories, setCategories] = useState<Category[]>([
-    { id: "1", name: "TÜBİTAK", createdDate: "Jan 10, 2026" },
-    { id: "2", name: "Teknofest", createdDate: "Jan 10, 2026" },
-    { id: "3", name: "Course", createdDate: "Jan 10, 2026" },
-    { id: "4", name: "Research", createdDate: "Feb 15, 2026" },
-  ]);
-
-  // Announcement state
-  // TODO: Connect to backend API for admin announcements
-  const [announcements, setAnnouncements] = useState<Announcement[]>([
-    {
-      id: "1",
-      title: "TÜBİTAK 2209-A Support Programme Open",
-      category: "TÜBİTAK",
-      content: "Applications are now open for undergraduate research project support. Deadline: April 30, 2026.",
-      createdDate: "March 20, 2026"
-    },
-    {
-      id: "2",
-      title: "Teknofest 2026 Team Formation Deadline",
-      category: "Teknofest",
-      content: "Teams must be finalized by April 1st for Teknofest competition entries.",
-      createdDate: "March 18, 2026"
-    },
-    {
-      id: "3",
-      title: "Spring Semester Course Projects Announced",
-      category: "Course",
-      content: "New course project topics are available for CS401 and CS402. Check the course portal for details.",
-      createdDate: "March 15, 2026"
-    }
-  ]);
+  const [filterRole, setFilterRole] = useState<UIRoleFilter>("All");
+  const [filterCategoryId, setFilterCategoryId] = useState<"All" | string>("All");
 
   // Form state
   const [newAnnouncement, setNewAnnouncement] = useState({
     title: "",
     category: "General" as "TÜBİTAK" | "Teknofest" | "Course" | "General",
-    content: ""
+    content: "",
   });
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [editingCategory, setEditingCategory] = useState<CategoryDTO | null>(null);
+  const [editCategoryName, setEditCategoryName] = useState("");
 
-  // Mock users
-  // TODO: Connect to backend API for all users
-  const [users, setUsers] = useState<User[]>([
-    { id: "1", email: "ali.yilmaz@university.edu", name: "Ali Yılmaz", role: "Student", status: "Active", joinedDate: "Jan 15, 2026" },
-    { id: "2", email: "ayse.yilmaz@university.edu", name: "Prof. Dr. Ayşe Yılmaz", role: "Advisor", status: "Active", joinedDate: "Jan 10, 2026" },
-    { id: "3", email: "zeynep.ozkan@university.edu", name: "Zeynep Özkan", role: "Student", status: "Active", joinedDate: "Feb 5, 2026" },
-    { id: "4", email: "mehmet.kaya@university.edu", name: "Assoc. Prof. Mehmet Kaya", role: "Advisor", status: "Active", joinedDate: "Jan 12, 2026" },
-    { id: "5", email: "elif.celik@university.edu", name: "Elif Çelik", role: "Student", status: "Inactive", joinedDate: "March 22, 2026" },
-    { id: "6", email: "can.ozkan@university.edu", name: "Prof. Dr. Can Özkan", role: "Advisor", status: "Active", joinedDate: "Jan 8, 2026" },
-    { id: "7", email: "burak.arslan@university.edu", name: "Burak Arslan", role: "Student", status: "Active", joinedDate: "Feb 18, 2026" },
-    { id: "8", email: "zeynep.demir@university.edu", name: "Dr. Zeynep Demir", role: "Advisor", status: "Active", joinedDate: "Jan 20, 2026" }
-  ]);
+  // Server data
+  const [users, setUsers] = useState<UserDTO[]>([]);
+  const [projects, setProjects] = useState<ProjectDTO[]>([]);
+  const [categories, setCategories] = useState<CategoryDTO[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementDTO[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Mock projects
-  // TODO: Connect to backend API for all projects
-  const projects: Project[] = [
-    { id: "1", title: "AI-Powered Smart Agriculture System", owner: "Ali Yılmaz", status: "Active", teamSize: 3, category: "TÜBİTAK", techStack: ["Python", "TensorFlow", "IoT"] },
-    { id: "2", title: "Autonomous Drone Navigation", owner: "Zeynep Özkan", status: "Active", teamSize: 2, category: "Teknofest", techStack: ["C++", "ROS", "Computer Vision"] },
-    { id: "3", title: "E-Commerce Platform Development", owner: "Elif Çelik", status: "Draft", teamSize: 4, category: "Course", techStack: ["React", "Node.js", "MongoDB"] },
-    { id: "4", title: "Blockchain Voting System", owner: "Burak Arslan", status: "Active", teamSize: 3, category: "TÜBİTAK", techStack: ["Solidity", "Web3", "React"] },
-    { id: "5", title: "Smart Home IoT Hub", owner: "Ali Yılmaz", status: "Draft", teamSize: 2, category: "Course", techStack: ["Python", "Raspberry Pi", "MQTT"] }
-  ];
+  // ---------------------------------------------------------------------------
+  // Fetchers
+  // ---------------------------------------------------------------------------
+  const fetchUsers = useCallback(async () => {
+    const res = await fetch(`${API_URL}/admin/users`, { headers: authHeaders(), cache: "no-store" });
+    if (!res.ok) throw new Error(`Users fetch failed (${res.status})`);
+    const data = (await res.json()) as { users: UserDTO[] };
+    setUsers(data.users ?? []);
+  }, []);
 
-  // Filter users
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = searchQuery === "" ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.name.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesRole = filterRole === "All" || user.role === filterRole;
-    
+  const fetchProjects = useCallback(async () => {
+    const res = await fetch(`${API_URL}/projects`, { headers: authHeaders(), cache: "no-store" });
+    if (!res.ok) throw new Error(`Projects fetch failed (${res.status})`);
+    const data = (await res.json()) as { projects: ProjectDTO[] };
+    setProjects(data.projects ?? []);
+  }, []);
+
+  const fetchCategories = useCallback(async () => {
+    const res = await fetch(`${API_URL}/admin/categories`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Categories fetch failed (${res.status})`);
+    const data = (await res.json()) as { categories: CategoryDTO[] };
+    setCategories(data.categories ?? []);
+  }, []);
+
+  const fetchAnnouncements = useCallback(async () => {
+    const res = await fetch(`${API_URL}/admin/announcements`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Announcements fetch failed (${res.status})`);
+    const data = (await res.json()) as { announcements: AnnouncementDTO[] };
+    setAnnouncements(data.announcements ?? []);
+  }, []);
+
+  useEffect(() => {
+    // Auth guard — kick anyone without an admin token to the login page.
+    const token = localStorage.getItem("token");
+    const role = localStorage.getItem("userRole");
+    if (!token || role !== "ADMIN") {
+      router.push("/login/admin");
+      return;
+    }
+
+    (async () => {
+      setLoading(true);
+      try {
+        await Promise.all([
+          fetchUsers(),
+          fetchProjects(),
+          fetchCategories(),
+          fetchAnnouncements(),
+        ]);
+      } catch (err) {
+        console.error("Admin dashboard load failed:", err);
+        const message = err instanceof Error ? err.message : "Failed to load data";
+        if (/401|403/.test(message)) {
+          localStorage.removeItem("token");
+          router.push("/login/admin");
+          return;
+        }
+        toast.error(message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [router, fetchUsers, fetchProjects, fetchCategories, fetchAnnouncements]);
+
+  // ---------------------------------------------------------------------------
+  // Derived data
+  // ---------------------------------------------------------------------------
+  const stats = useMemo(() => {
+    const totalUsers = users.length;
+    const activeProjects = projects.filter(p => projectStatusBucket(p.status) === "Active").length;
+    // teamMatches = total number of team memberships across the system.
+    const teamMatches = projects.reduce((acc, p) => acc + p.teamMembers.length, 0);
+    // Backend has no concept of "online" — best proxy is users with ACTIVE status.
+    const onlineUsers = users.filter(u => u.status === "ACTIVE").length;
+    return { totalUsers, activeProjects, teamMatches, onlineUsers };
+  }, [users, projects]);
+
+  const filteredUsers = useMemo(() => users.filter(user => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch =
+      searchQuery === "" ||
+      user.email.toLowerCase().includes(q) ||
+      user.name.toLowerCase().includes(q);
+    const uiRole = backendRoleToUI(user.role);
+    const matchesRole = filterRole === "All" || uiRole === filterRole;
     return matchesSearch && matchesRole;
-  });
+  }), [users, searchQuery, filterRole]);
 
-  // Filter projects
-  const filteredProjects = projects.filter(project => {
-    const matchesSearch = projectSearchQuery === "" ||
-      project.title.toLowerCase().includes(projectSearchQuery.toLowerCase()) ||
-      project.owner.toLowerCase().includes(projectSearchQuery.toLowerCase()) ||
-      project.techStack.some(tech => tech.toLowerCase().includes(projectSearchQuery.toLowerCase()));
-    
-    const matchesCategory = filterCategory === "All" || project.category === filterCategory;
-    
+  const filteredProjects = useMemo(() => projects.filter(project => {
+    const q = projectSearchQuery.toLowerCase();
+    const matchesSearch =
+      projectSearchQuery === "" ||
+      project.title.toLowerCase().includes(q) ||
+      project.owner.name.toLowerCase().includes(q) ||
+      project.requiredSkills.some(skill => skill.toLowerCase().includes(q));
+    const matchesCategory = filterCategoryId === "All" || project.category.id === filterCategoryId;
     return matchesSearch && matchesCategory;
-  });
+  }), [projects, projectSearchQuery, filterCategoryId]);
 
+  // First 4 categories from the DB become filter chips (keeps the existing
+  // chip-row layout density, regardless of which categories the admin seeded).
+  const filterCategoryChips = useMemo(() => categories.slice(0, 4), [categories]);
+
+  // ---------------------------------------------------------------------------
+  // Mutations
+  // ---------------------------------------------------------------------------
   const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("userRole");
+    localStorage.removeItem("userName");
     router.push("/");
   };
 
-  const handleCreateAnnouncement = () => {
+  const handleCreateAnnouncement = async () => {
     if (!newAnnouncement.title || !newAnnouncement.content) {
       toast.error("Please fill in all fields");
       return;
     }
-
-    const announcement: Announcement = {
-      id: Date.now().toString(),
-      ...newAnnouncement,
-      createdDate: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    };
-
-    setAnnouncements([announcement, ...announcements]);
-    setShowCreateModal(false);
-    setNewAnnouncement({ title: "", category: "General", content: "" });
-    
-    toast.success("Announcement Created!", {
-      description: "The announcement has been published to all users.",
-      duration: 4000,
-      className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
-    });
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/announcements`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(newAnnouncement),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+      setShowCreateModal(false);
+      setNewAnnouncement({ title: "", category: "General", content: "" });
+      await fetchAnnouncements();
+      toast.success("Announcement Created!", {
+        description: "The announcement has been published to all users.",
+        duration: 4000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+      });
+    } catch (err) {
+      console.error("Create announcement failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to create announcement");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleToggleUserStatus = (userId: string) => {
-    setUsers(users.map(user => 
-      user.id === userId 
-        ? { ...user, status: user.status === "Active" ? "Inactive" : "Active" as "Active" | "Inactive" }
-        : user
-    ));
-    
-    const user = users.find(u => u.id === userId);
-    toast.success(`User ${user?.status === "Active" ? "Deactivated" : "Activated"}`, {
-      duration: 3000,
-      className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
-    });
+  const handleToggleUserStatus = async (userId: string) => {
+    const target = users.find(u => u.id === userId);
+    if (!target) return;
+    try {
+      const res = await fetch(`${API_URL}/admin/users/${userId}/toggle-status`, {
+        method: "PUT",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+      await fetchUsers();
+      toast.success(`User ${target.status === "ACTIVE" ? "Deactivated" : "Activated"}`, {
+        duration: 3000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+      });
+    } catch (err) {
+      console.error("Toggle user status failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to update user status");
+    }
   };
 
-  const handleCreateCategory = () => {
-    if (!newCategoryName) {
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) {
       toast.error("Please enter a category name");
       return;
     }
-
-    const category: Category = {
-      id: Date.now().toString(),
-      name: newCategoryName,
-      createdDate: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    };
-
-    setCategories([category, ...categories]);
-    setShowCategoryModal(false);
-    setNewCategoryName("");
-    
-    toast.success("Category Created!", {
-      description: "The category has been added successfully.",
-      duration: 4000,
-      className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
-    });
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/categories`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ name: newCategoryName.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+      setShowCategoryModal(false);
+      setNewCategoryName("");
+      await fetchCategories();
+      toast.success("Category Created!", {
+        description: "The category has been added successfully.",
+        duration: 4000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+      });
+    } catch (err) {
+      console.error("Create category failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to create category");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleUpdateCategory = async () => {
-    if (!editingCategory || !editCategoryName) {
+    if (!editingCategory || !editCategoryName.trim()) {
       toast.error("Please enter a category name");
       return;
     }
-
+    setSubmitting(true);
     try {
-      const token = localStorage.getItem("token");
-      const currentCategoryId = editingCategory.id;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/categories/${currentCategoryId}`, {
+      const res = await fetch(`${API_URL}/admin/categories/${editingCategory.id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "Authorization": `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ name: editCategoryName }),
+        headers: authHeaders(),
+        body: JSON.stringify({ name: editCategoryName.trim() }),
       });
-
-      setCategories(categories.map(c => c.id === currentCategoryId ? { ...c, name: editCategoryName } : c));
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
       setShowEditCategoryModal(false);
       setEditingCategory(null);
       setEditCategoryName("");
-      
-      if (res.ok) {
-        toast.success("Category Updated!", {
-          duration: 3000,
-          className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
-        });
-      } else {
-        toast.success("Category Updated (Local Only)", {
-          description: "Could not sync with backend.",
-          duration: 3000,
-          className: "bg-yellow-500/90 backdrop-blur-xl text-white border-yellow-400/50"
-        });
-      }
+      await fetchCategories();
+      toast.success("Category Updated!", {
+        duration: 3000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+      });
     } catch (err) {
-      console.error(err);
-      toast.error("Failed to update category");
+      console.error("Update category failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to update category");
+    } finally {
+      setSubmitting(false);
     }
   };
+
+  const handleDeleteCategory = async (categoryId: string) => {
+    try {
+      const res = await fetch(`${API_URL}/admin/categories/${categoryId}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+      await fetchCategories();
+      toast.success("Category Deleted!", {
+        duration: 3000,
+        className: "bg-red-500/90 backdrop-blur-xl text-white border-red-400/50",
+      });
+    } catch (err) {
+      console.error("Delete category failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to delete category");
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950">
+        <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950 relative overflow-hidden">
       <Toaster position="bottom-right" />
-      
+
       {/* Background grain texture */}
       <div className="absolute inset-0 opacity-30 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZmlsdGVyIGlkPSJub2lzZSI+PGZlVHVyYnVsZW5jZSB0eXBlPSJmcmFjdGFsTm9pc2UiIGJhc2VGcmVxdWVuY3k9IjAuOSIgbnVtT2N0YXZlcz0iNCIgc3RpdGNoVGlsZXM9InN0aXRjaCIvPjwvZmlsdGVyPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbHRlcj0idXJsKCNub2lzZSkiIG9wYWNpdHk9IjAuNiIvPjwvc3ZnPg==')]" />
 
       {/* Top Navigation Bar */}
       <nav className="relative z-20 px-8 py-4">
         <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-full px-8 py-4 flex items-center justify-between">
-          {/* Logo */}
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center overflow-hidden">
               <Award className="w-6 h-6 text-slate-900" strokeWidth={2.5} />
@@ -283,7 +430,6 @@ export default function AdminDashboard() {
             </span>
           </div>
 
-          {/* Profile Area */}
           <div className="relative">
             <button
               onClick={() => setShowProfileDropdown(!showProfileDropdown)}
@@ -299,7 +445,6 @@ export default function AdminDashboard() {
               <ChevronDown className="w-5 h-5 text-white/60" strokeWidth={2} />
             </button>
 
-            {/* Profile Dropdown */}
             {showProfileDropdown && (
               <div className="absolute top-full right-0 mt-3 w-64 bg-white rounded-[30px] shadow-2xl overflow-hidden animate-slideDown">
                 <button
@@ -352,7 +497,7 @@ export default function AdminDashboard() {
             <p className="text-white text-4xl font-bold">{stats.teamMatches}</p>
           </div>
 
-          {/* Advisor Activities with Live Indicator */}
+          {/* Online Users with Live Indicator */}
           <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-8">
             <div className="flex items-center justify-between mb-4">
               <div className="w-12 h-12 bg-yellow-500/20 rounded-full flex items-center justify-center">
@@ -368,15 +513,11 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Row 2: Activity Overview Chart */}
-        
-
         <div className="grid grid-cols-2 gap-6">
           {/* User Management Section */}
           <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-10">
             <h2 className="text-2xl font-bold text-white mb-6">User Management</h2>
-            
-            {/* Filters and Search */}
+
             <div className="mb-6 space-y-4">
               <div className="relative">
                 <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-white/50" strokeWidth={2} />
@@ -388,9 +529,9 @@ export default function AdminDashboard() {
                   className="w-full pl-16 pr-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
                 />
               </div>
-              
+
               <div className="flex space-x-3">
-                {(["All", "Student", "Advisor"] as const).map((role) => (
+                {(["All", "Student", "Advisor", "Admin"] as const).map((role) => (
                   <button
                     key={role}
                     onClick={() => setFilterRole(role)}
@@ -406,46 +547,54 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* User Table */}
             <div className="space-y-3 max-h-96 overflow-y-auto">
-              {filteredUsers.map((user) => (
-                <div
-                  key={user.id}
-                  className="flex items-center justify-between px-6 py-4 bg-white/10 rounded-[30px] border border-white/20 hover:bg-white/15 transition-all"
-                >
-                  <div className="flex-1">
-                    <p className="text-white font-semibold">{user.name}</p>
-                    <p className="text-white/50 text-sm">{user.email}</p>
+              {filteredUsers.map((user) => {
+                const uiRole = backendRoleToUI(user.role);
+                const uiStatus = backendStatusToUI(user.status);
+                return (
+                  <div
+                    key={user.id}
+                    className="flex items-center justify-between px-6 py-4 bg-white/10 rounded-[30px] border border-white/20 hover:bg-white/15 transition-all"
+                  >
+                    <div className="flex-1">
+                      <p className="text-white font-semibold">{user.name}</p>
+                      <p className="text-white/50 text-sm">{user.email}</p>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <span className={`px-4 py-2 rounded-full text-xs font-semibold ${
+                        uiRole === "Student"
+                          ? "bg-blue-500/20 text-blue-200 border border-blue-400/30"
+                          : uiRole === "Advisor"
+                          ? "bg-purple-500/20 text-purple-200 border border-purple-400/30"
+                          : "bg-pink-500/20 text-pink-200 border border-pink-400/30"
+                      }`}>
+                        {uiRole}
+                      </span>
+                      <button
+                        onClick={() => handleToggleUserStatus(user.id)}
+                        className={`px-4 py-2 rounded-full text-xs font-semibold transition-all ${
+                          uiStatus === "Active"
+                            ? "bg-green-500/20 text-green-200 border border-green-400/30 hover:bg-red-500/20 hover:text-red-200 hover:border-red-400/30"
+                            : "bg-red-500/20 text-red-200 border border-red-400/30 hover:bg-green-500/20 hover:text-green-200 hover:border-green-400/30"
+                        }`}
+                      >
+                        {uiStatus === "Active" ? "Deactivate" : "Activate"}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-4">
-                    <span className={`px-4 py-2 rounded-full text-xs font-semibold ${
-                      user.role === "Student"
-                        ? "bg-blue-500/20 text-blue-200 border border-blue-400/30"
-                        : "bg-purple-500/20 text-purple-200 border border-purple-400/30"
-                    }`}>
-                      {user.role}
-                    </span>
-                    <button
-                      onClick={() => handleToggleUserStatus(user.id)}
-                      className={`px-4 py-2 rounded-full text-xs font-semibold transition-all ${
-                        user.status === "Active"
-                          ? "bg-green-500/20 text-green-200 border border-green-400/30 hover:bg-red-500/20 hover:text-red-200 hover:border-red-400/30"
-                          : "bg-red-500/20 text-red-200 border border-red-400/30 hover:bg-green-500/20 hover:text-green-200 hover:border-green-400/30"
-                      }`}
-                    >
-                      {user.status === "Active" ? "Deactivate" : "Activate"}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
+
+              {filteredUsers.length === 0 && (
+                <p className="text-white/40 text-sm text-center py-6">No users found</p>
+              )}
             </div>
           </div>
 
           {/* Project Exploration */}
           <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-10">
             <h2 className="text-2xl font-bold text-white mb-6">Project Exploration</h2>
-            
-            {/* Search and Filters */}
+
             <div className="mb-6 space-y-4">
               <div className="relative">
                 <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-white/50" strokeWidth={2} />
@@ -457,55 +606,71 @@ export default function AdminDashboard() {
                   className="w-full pl-16 pr-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
                 />
               </div>
-              
-              <div className="flex space-x-3">
-                {(["All", "TÜBİTAK", "Teknofest", "Course"] as const).map((category) => (
+
+              <div className="flex space-x-3 flex-wrap gap-y-2">
+                <button
+                  onClick={() => setFilterCategoryId("All")}
+                  className={`px-5 py-2 rounded-full text-sm font-medium transition-all ${
+                    filterCategoryId === "All"
+                      ? "bg-purple-500/30 text-purple-200 border border-purple-400/50"
+                      : "bg-white/10 text-white/70 border border-white/20 hover:bg-white/20"
+                  }`}
+                >
+                  All
+                </button>
+                {filterCategoryChips.map((c) => (
                   <button
-                    key={category}
-                    onClick={() => setFilterCategory(category)}
+                    key={c.id}
+                    onClick={() => setFilterCategoryId(c.id)}
                     className={`px-5 py-2 rounded-full text-sm font-medium transition-all ${
-                      filterCategory === category
+                      filterCategoryId === c.id
                         ? "bg-purple-500/30 text-purple-200 border border-purple-400/50"
                         : "bg-white/10 text-white/70 border border-white/20 hover:bg-white/20"
                     }`}
                   >
-                    {category}
+                    {c.name}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Projects List */}
             <div className="space-y-3 max-h-96 overflow-y-auto">
-              {filteredProjects.map((project) => (
-                <div
-                  key={project.id}
-                  className="px-6 py-4 bg-white/10 rounded-[30px] border border-white/20 hover:bg-white/15 transition-all"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <p className="text-white font-semibold">{project.title}</p>
-                      <p className="text-white/50 text-sm">by {project.owner}</p>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                      project.status === "Active"
-                        ? "bg-green-500/20 text-green-200 border border-green-400/30"
-                        : project.status === "Draft"
-                        ? "bg-yellow-500/20 text-yellow-200 border border-yellow-400/30"
-                        : "bg-blue-500/20 text-blue-200 border border-blue-400/30"
-                    }`}>
-                      {project.status}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {project.techStack.map((tech, idx) => (
-                      <span key={idx} className="px-3 py-1 bg-blue-500/20 text-blue-200 rounded-full text-xs border border-blue-400/30">
-                        {tech}
+              {filteredProjects.map((project) => {
+                const bucket = projectStatusBucket(project.status);
+                return (
+                  <div
+                    key={project.id}
+                    className="px-6 py-4 bg-white/10 rounded-[30px] border border-white/20 hover:bg-white/15 transition-all"
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <p className="text-white font-semibold">{project.title}</p>
+                        <p className="text-white/50 text-sm">by {project.owner.name}</p>
+                      </div>
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                        bucket === "Active"
+                          ? "bg-green-500/20 text-green-200 border border-green-400/30"
+                          : bucket === "Draft"
+                          ? "bg-yellow-500/20 text-yellow-200 border border-yellow-400/30"
+                          : "bg-blue-500/20 text-blue-200 border border-blue-400/30"
+                      }`}>
+                        {bucket}
                       </span>
-                    ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {project.requiredSkills.map((tech, idx) => (
+                        <span key={idx} className="px-3 py-1 bg-blue-500/20 text-blue-200 rounded-full text-xs border border-blue-400/30">
+                          {tech}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
+
+              {filteredProjects.length === 0 && (
+                <p className="text-white/40 text-sm text-center py-6">No projects found</p>
+              )}
             </div>
           </div>
         </div>
@@ -544,9 +709,13 @@ export default function AdminDashboard() {
                 </div>
                 <h3 className="text-lg font-bold text-white mb-2">{announcement.title}</h3>
                 <p className="text-white/60 text-sm mb-3">{announcement.content}</p>
-                <p className="text-white/40 text-xs">{announcement.createdDate}</p>
+                <p className="text-white/40 text-xs">{formatDate(announcement.createdAt)}</p>
               </div>
             ))}
+
+            {announcements.length === 0 && (
+              <p className="text-white/40 text-sm col-span-3 text-center py-6">No announcements yet</p>
+            )}
           </div>
         </div>
 
@@ -572,7 +741,7 @@ export default function AdminDashboard() {
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1">
                     <h3 className="text-lg font-bold text-white mb-1">{category.name}</h3>
-                    <p className="text-white/40 text-xs">{category.createdDate}</p>
+                    <p className="text-white/40 text-xs">{formatDate(category.createdAt)}</p>
                   </div>
                   <div className="flex space-x-2">
                     <button
@@ -586,13 +755,7 @@ export default function AdminDashboard() {
                       <Pencil className="w-4 h-4 text-blue-300" strokeWidth={2} />
                     </button>
                     <button
-                      onClick={() => {
-                        setCategories(categories.filter(c => c.id !== category.id));
-                        toast.success("Category Deleted!", {
-                          duration: 3000,
-                          className: "bg-red-500/90 backdrop-blur-xl text-white border-red-400/50"
-                        });
-                      }}
+                      onClick={() => handleDeleteCategory(category.id)}
                       className="w-8 h-8 bg-red-500/20 hover:bg-red-500/30 border border-red-400/30 rounded-full flex items-center justify-center transition-all opacity-0 group-hover:opacity-100"
                     >
                       <X className="w-4 h-4 text-red-300" strokeWidth={2} />
@@ -601,6 +764,10 @@ export default function AdminDashboard() {
                 </div>
               </div>
             ))}
+
+            {categories.length === 0 && (
+              <p className="text-white/40 text-sm col-span-4 text-center py-6">No categories yet</p>
+            )}
           </div>
         </div>
       </div>
@@ -660,9 +827,10 @@ export default function AdminDashboard() {
             <div className="flex gap-4 mt-8">
               <button
                 onClick={handleCreateAnnouncement}
-                className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all"
+                disabled={submitting}
+                className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Publish Announcement
+                {submitting ? "Publishing..." : "Publish Announcement"}
               </button>
               <button
                 onClick={() => setShowCreateModal(false)}
@@ -705,9 +873,10 @@ export default function AdminDashboard() {
             <div className="flex gap-4 mt-8">
               <button
                 onClick={handleCreateCategory}
-                className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all"
+                disabled={submitting}
+                className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Create Category
+                {submitting ? "Creating..." : "Create Category"}
               </button>
               <button
                 onClick={() => setShowCategoryModal(false)}
@@ -754,9 +923,10 @@ export default function AdminDashboard() {
             <div className="flex gap-4 mt-8">
               <button
                 onClick={handleUpdateCategory}
-                className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all"
+                disabled={submitting}
+                className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Update Category
+                {submitting ? "Updating..." : "Update Category"}
               </button>
               <button
                 onClick={() => {

@@ -7,6 +7,7 @@ import applicationRoutes from './routes/application.routes';
 import advisorRoutes from './routes/advisor.routes';
 import adminRoutes from './routes/admin.routes';
 import userRoutes from './routes/user.routes';
+import teamAdRoutes from './routes/teamAd.routes';
 import { prisma } from './prisma/client';
 import { globalLimiter, authLimiter } from './middlewares/rateLimit.middleware';
 
@@ -42,6 +43,7 @@ app.use('/api/applications', applicationRoutes);
 app.use('/api/advisors', advisorRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/team-ads', teamAdRoutes);
 
 // Global Error Handler (Fallback)
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

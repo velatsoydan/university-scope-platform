@@ -95,15 +95,59 @@ export default function AdvisorProfile() {
     fetchProfile();
   }, [router]);
 
-  const handleSaveChanges = () => {
+  const handleSaveChanges = async () => {
     if (!editFormData) return;
-    setProfileData(editFormData);
-    setIsEditing(false);
-    toast.success("Profile Updated!", {
-      description: "Your profile has been updated successfully.",
-      duration: 4000,
-      className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
-    });
+    const token = localStorage.getItem("token");
+    if (!token) {
+      router.push("/login/advisor");
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/users/me`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            name: editFormData.name,
+            title: editFormData.title,
+            department: editFormData.department,
+            expertise: editFormData.expertise,
+            researchInterests: editFormData.researchInterests,
+            previousProjects: editFormData.previousProjects,
+            // GitHub/LinkedIn URLs are only on StudentProfile in the current
+            // schema; advisor saves silently drop them on the server side.
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem("token");
+          router.push("/login/advisor");
+          return;
+        }
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+
+      setProfileData(editFormData);
+      localStorage.setItem("userName", editFormData.name);
+      setIsEditing(false);
+
+      toast.success("Profile Updated!", {
+        description: "Your profile has been updated successfully.",
+        duration: 4000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
+      });
+    } catch (err) {
+      console.error("Profile save failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to update profile");
+    }
   };
 
   const handleCancel = () => {

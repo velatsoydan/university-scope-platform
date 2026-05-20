@@ -104,7 +104,7 @@ export const respondToAdvisorRequest = async (req: AuthRequest, res: Response): 
         // Update project with this advisor and change status
         await tx.project.update({
           where: { id: advisorRequest.projectId },
-          data: { 
+          data: {
             advisorId: advisorId,
             status: 'ADVISOR_ASSIGNED'
           }
@@ -126,5 +126,71 @@ export const respondToAdvisorRequest = async (req: AuthRequest, res: Response): 
   } catch (error) {
     console.error('Error responding to advisor request:', error);
     res.status(500).json({ error: 'Failed to respond to advisor request' });
+  }
+};
+
+/**
+ * GET /api/advisors
+ * Lists every INSTRUCTOR user with their advisor profile included so the
+ * student "Find Advisor" page can render the directory in one round-trip.
+ */
+export const listAdvisors = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const advisors = await prisma.user.findMany({
+      where: { role: 'INSTRUCTOR', status: 'ACTIVE' },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        advisorProfile: {
+          select: {
+            title: true,
+            department: true,
+            isAvailable: true,
+            expertise: true,
+            researchInterests: true,
+          }
+        }
+      }
+    });
+    res.status(200).json({ advisors });
+  } catch (error) {
+    console.error('Error listing advisors:', error);
+    res.status(500).json({ error: 'Failed to list advisors' });
+  }
+};
+
+/**
+ * GET /api/advisors/requests
+ * Lists every AdvisorRequest addressed to the calling instructor, with the
+ * underlying project + owner + team members included so the dashboard can
+ * render incoming requests without extra round-trips.
+ */
+export const getMyAdvisorRequests = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const advisorId = req.user!.userId;
+
+    const requests = await prisma.advisorRequest.findMany({
+      where: { advisorId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        project: {
+          include: {
+            category: true,
+            owner: { select: { id: true, name: true, email: true } },
+            teamMembers: {
+              include: { user: { select: { id: true, name: true, email: true } } }
+            },
+            teamAd: true,
+          }
+        }
+      }
+    });
+
+    res.status(200).json({ requests });
+  } catch (error) {
+    console.error('Error fetching advisor requests:', error);
+    res.status(500).json({ error: 'Failed to fetch advisor requests' });
   }
 };

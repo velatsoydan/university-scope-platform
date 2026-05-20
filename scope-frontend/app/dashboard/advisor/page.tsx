@@ -1,14 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   Users,
   Briefcase,
   Bell,
   CheckCircle,
-  XCircle,
   Calendar,
   DollarSign,
   X,
@@ -20,305 +18,409 @@ import {
   Award,
   Target,
   BookOpen,
-  GraduationCap
+  GraduationCap,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 
-interface TeamMember {
+// -----------------------------------------------------------------------------
+// API base — env var holds the host (no /api suffix); we append /api per call,
+// matching the convention used in app/dashboard/student/profile/page.tsx.
+// -----------------------------------------------------------------------------
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api`;
+
+// -----------------------------------------------------------------------------
+// Types — derived from prisma/schema.prisma
+// -----------------------------------------------------------------------------
+type RequestStatus = "PENDING" | "ACCEPTED" | "REJECTED";
+
+interface CategoryDTO {
+  id: string;
   name: string;
+}
+
+interface TeamMemberDTO {
+  id: string;
+  userId: string;
   role: string;
-  email: string;
+  user: { id: string; name: string; email: string };
 }
 
-interface ProjectRequest {
-  id: number;
-  studentName: string;
-  studentEmail: string;
-  projectTitle: string;
-  projectDescription: string;
-  category: string;
-  budget: string;
-  teamMembers: TeamMember[];
-  requestDate: string;
-  status: "Pending" | "Accepted" | "Rejected";
-  requiredRoles?: string[];
-}
-
-interface OngoingProject {
-  id: number;
+interface ProjectInRequestDTO {
+  id: string;
   title: string;
-  teamSize: number;
+  description: string;
+  budget: string | null;
+  requiredSkills: string[];
   status: string;
-  budget: string;
-  teamMembers: TeamMember[];
+  createdAt: string;
+  category: CategoryDTO;
+  owner: { id: string; name: string; email: string };
+  teamMembers: TeamMemberDTO[];
+  teamAd: { id: string; technicalSkills: string[] } | null;
+}
+
+interface AdvisorRequestDTO {
+  id: string;
+  projectId: string;
+  advisorId: string;
+  status: RequestStatus;
+  message: string | null;
+  createdAt: string;
+  project: ProjectInRequestDTO;
+}
+
+interface AdvisedProjectDTO {
+  id: string;
+  title: string;
+  description: string;
+  budget: string | null;
+  status: string;
+  createdAt: string;
+  category: CategoryDTO;
+  owner: { id: string; name: string; email: string };
+  teamMembers: TeamMemberDTO[];
+}
+
+interface AdvisorProfileDTO {
+  title: string | null;
+  department: string | null;
+  isAvailable: boolean;
+  expertise: string[];
+  researchInterests: string[];
+  previousProjects: string[];
+}
+
+interface MeResponse {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    advisorProfile: AdvisorProfileDTO | null;
+  };
+}
+
+interface AnnouncementDTO {
+  id: string;
+  title: string;
   category: string;
+  content: string;
+  createdAt: string;
 }
 
 type ViewMode = "dashboard" | "profile-showcase" | "announcements";
 
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
+
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "long", day: "numeric", year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function humanizeProjectStatus(s: string): string {
+  switch (s) {
+    case "PENDING_ADVISOR": return "Pending Advisor";
+    case "ADVISOR_ASSIGNED": return "Advisor Assigned";
+    case "IN_PROGRESS": return "In Progress";
+    case "REVIEW_PHASE": return "Review Phase";
+    case "COMPLETED": return "Completed";
+    case "DRAFT": return "Draft";
+    default: return s;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Page
+// -----------------------------------------------------------------------------
 export default function AdvisorDashboard() {
   const router = useRouter();
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
+
+  // Modal toggles
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [showProjectDetailModal, setShowProjectDetailModal] = useState(false);
   const [showAnnouncementsModal, setShowAnnouncementsModal] = useState(false);
   const [showOngoingDetailModal, setShowOngoingDetailModal] = useState(false);
-  const [selectedRequest, setSelectedRequest] = useState<ProjectRequest | null>(null);
-  const [selectedOngoingProject, setSelectedOngoingProject] = useState<OngoingProject | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<AdvisorRequestDTO | null>(null);
+  const [selectedOngoingProject, setSelectedOngoingProject] = useState<AdvisedProjectDTO | null>(null);
+
+  // Loading flags
+  const [loading, setLoading] = useState(true);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  // Server data
+  const [profile, setProfile] = useState({
+    name: "",
+    title: "",
+    department: "",
+    email: "",
+    expertise: [] as string[],
+    researchInterests: [] as string[],
+    previousProjects: [] as string[],
+  });
   const [isAvailable, setIsAvailable] = useState(true);
+  const [requests, setRequests] = useState<AdvisorRequestDTO[]>([]);
+  const [advisedProjects, setAdvisedProjects] = useState<AdvisedProjectDTO[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementDTO[]>([]);
 
-  // Profile data with enhanced fields
-  const [profileData, setProfileData] = useState({
-    name: "Dr. Demir Han",
-    title: "Associate Professor",
-    department: "Computer Engineering",
-    email: "demir.han@university.edu.tr",
-    expertise: ["Machine Learning", "Artificial Intelligence", "Data Science"],
-    researchInterests: ["Deep Learning", "Computer Vision", "Natural Language Processing", "Neural Networks"],
-    previousProjects: [
-      "AI-Based Medical Diagnosis Systems",
-      "Smart City IoT Networks",
-      "Educational Technology Platforms",
-      "Computer Vision for Autonomous Vehicles",
-      "Natural Language Processing Tools"
-    ]
-  });
+  const [editFormData, setEditFormData] = useState(profile);
 
-  const [editFormData, setEditFormData] = useState(profileData);
-
-  // Dynamic stats
-  const [stats, setStats] = useState({
-    pendingRequests: 8,
-    activeProjects: 12,
-    totalStudents: 45
-  });
-
-  // Incoming requests
-  // TODO: Connect to backend API for incoming project requests
-  const [requests, setRequests] = useState<ProjectRequest[]>([
-    {
-      id: 1,
-      studentName: "Ali Demir",
-      studentEmail: "ali.demir@university.edu.tr",
-      projectTitle: "AI-Powered Study Assistant",
-      projectDescription: "A machine learning application that helps students organize study materials and generate personalized quizzes based on their learning patterns.",
-      category: "AI",
-      budget: "15,000 TL",
-      teamMembers: [
-        { name: "Ali Demir", role: "Project Lead", email: "ali.demir@university.edu.tr" },
-        { name: "Ayşe Kara", role: "ML Engineer", email: "ayse.kara@university.edu.tr" },
-        { name: "Mehmet Özkan", role: "Frontend Developer", email: "mehmet.ozkan@university.edu.tr" }
-      ],
-      requestDate: "March 24, 2026",
-      status: "Pending",
-      requiredRoles: ["ML Engineer", "Frontend Developer", "Backend Developer"]
-    },
-    {
-      id: 2,
-      studentName: "Zeynep Yıldız",
-      studentEmail: "zeynep.yildiz@university.edu.tr",
-      projectTitle: "Smart Campus Navigation System",
-      projectDescription: "An IoT-based indoor navigation system using Bluetooth beacons to help students navigate the campus efficiently.",
-      category: "IoT",
-      budget: "20,000 TL",
-      teamMembers: [
-        { name: "Zeynep Yıldız", role: "Project Lead", email: "zeynep.yildiz@university.edu.tr" },
-        { name: "Can Çelik", role: "IoT Engineer", email: "can.celik@university.edu.tr" }
-      ],
-      requestDate: "March 23, 2026",
-      status: "Pending",
-      requiredRoles: ["IoT Engineer", "Mobile Developer"]
-    },
-    {
-      id: 3,
-      studentName: "Elif Özdemir",
-      studentEmail: "elif.ozdemir@university.edu.tr",
-      projectTitle: "Predictive Maintenance for Industrial Equipment",
-      projectDescription: "Using machine learning algorithms to predict equipment failures in manufacturing facilities before they occur.",
-      category: "AI",
-      budget: "18,000 TL",
-      teamMembers: [
-        { name: "Elif Özdemir", role: "Project Lead", email: "elif.ozdemir@university.edu.tr" },
-        { name: "Burak Yılmaz", role: "Data Scientist", email: "burak.yilmaz@university.edu.tr" },
-        { name: "Selin Kaya", role: "ML Engineer", email: "selin.kaya@university.edu.tr" }
-      ],
-      requestDate: "March 22, 2026",
-      status: "Pending",
-      requiredRoles: ["Data Scientist", "ML Engineer", "Backend Developer"]
+  // ---------------------------------------------------------------------------
+  // Fetchers
+  // ---------------------------------------------------------------------------
+  const fetchProfile = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      router.push("/login/advisor");
+      return;
     }
-  ]);
-
-  // Ongoing projects - will be dynamically updated
-  // TODO: Connect to backend API for ongoing projects
-  const [ongoingProjects, setOngoingProjects] = useState<OngoingProject[]>([
-    {
-      id: 101,
-      title: "Healthcare Diagnostic System",
-      teamSize: 4,
-      status: "In Progress",
-      budget: "25,000 TL",
-      category: "AI",
-      teamMembers: [
-        { name: "Fatma Yıldırım", role: "Project Lead", email: "fatma.y@university.edu.tr" },
-        { name: "Emre Kaya", role: "ML Engineer", email: "emre.k@university.edu.tr" },
-        { name: "Deniz Aydın", role: "Backend Developer", email: "deniz.a@university.edu.tr" },
-        { name: "Seda Çetin", role: "Frontend Developer", email: "seda.c@university.edu.tr" }
-      ]
-    },
-    {
-      id: 102,
-      title: "E-Commerce Recommendation Engine",
-      teamSize: 3,
-      status: "In Progress",
-      budget: "18,000 TL",
-      category: "Web",
-      teamMembers: [
-        { name: "Kerem Özkan", role: "Project Lead", email: "kerem.o@university.edu.tr" },
-        { name: "Ece Demir", role: "Data Scientist", email: "ece.d@university.edu.tr" },
-        { name: "Mert Şahin", role: "Full Stack Developer", email: "mert.s@university.edu.tr" }
-      ]
-    },
-    {
-      id: 103,
-      title: "Autonomous Drone Navigation",
-      teamSize: 5,
-      status: "Review Phase",
-      budget: "30,000 TL",
-      category: "Robotics",
-      teamMembers: [
-        { name: "Berk Arslan", role: "Project Lead", email: "berk.a@university.edu.tr" },
-        { name: "Aylin Yurt", role: "Embedded Systems Engineer", email: "aylin.y@university.edu.tr" },
-        { name: "Onur Tekin", role: "Control Systems Engineer", email: "onur.t@university.edu.tr" },
-        { name: "İrem Koç", role: "Computer Vision Engineer", email: "irem.k@university.edu.tr" },
-        { name: "Cem Aktaş", role: "Software Engineer", email: "cem.a@university.edu.tr" }
-      ]
-    },
-    {
-      id: 104,
-      title: "Blockchain Supply Chain",
-      teamSize: 4,
-      status: "In Progress",
-      budget: "22,000 TL",
-      category: "Blockchain",
-      teamMembers: [
-        { name: "Gizem Yılmaz", role: "Project Lead", email: "gizem.y@university.edu.tr" },
-        { name: "Ahmet Kara", role: "Blockchain Developer", email: "ahmet.k@university.edu.tr" },
-        { name: "Sibel Özdemir", role: "Backend Developer", email: "sibel.o@university.edu.tr" },
-        { name: "Tolga Erdem", role: "Smart Contract Developer", email: "tolga.e@university.edu.tr" }
-      ]
+    const res = await fetch(`${API_URL}/users/me`, { headers: authHeaders(), cache: "no-store" });
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("token");
+      router.push("/login/advisor");
+      return;
     }
-  ]);
-
-  // Mock announcements
-  // TODO: Connect to backend API for advisor announcements
-  const announcements = [
-    {
-      id: 1,
-      title: "New Funding Opportunity for AI Projects",
-      date: "March 25, 2026",
-      content: "The university is offering additional funding of up to 50,000 TL for outstanding AI and Machine Learning projects. Applications are open until April 15, 2026.",
-      type: "funding"
-    },
-    {
-      id: 2,
-      title: "Project Submission Deadline Extended",
-      date: "March 24, 2026",
-      content: "Due to popular request, the final project submission deadline has been extended to May 30, 2026. Please ensure all documentation is complete.",
-      type: "deadline"
-    },
-    {
-      id: 3,
-      title: "Annual Research Conference",
-      date: "March 22, 2026",
-      content: "The Annual Research Conference will be held on April 20, 2026. All advisors and students are encouraged to present their work. Registration is now open.",
-      type: "event"
-    }
-  ];
-
-  const handleAcceptRequest = (requestId: number) => {
-    const acceptedRequest = requests.find(req => req.id === requestId);
-    if (!acceptedRequest) return;
-
-    // Update request status
-    setRequests(requests.map(req =>
-      req.id === requestId ? { ...req, status: "Accepted" as const } : req
-    ));
-
-    // Update stats: decrement pending, increment active
-    setStats(prev => ({
-      ...prev,
-      pendingRequests: prev.pendingRequests - 1,
-      activeProjects: prev.activeProjects + 1
-    }));
-
-    // Add to ongoing projects
-    const newOngoingProject: OngoingProject = {
-      id: Date.now(), // Generate unique ID
-      title: acceptedRequest.projectTitle,
-      teamSize: acceptedRequest.teamMembers.length,
-      status: "In Progress",
-      budget: acceptedRequest.budget,
-      teamMembers: acceptedRequest.teamMembers,
-      category: acceptedRequest.category
-    };
-    setOngoingProjects([newOngoingProject, ...ongoingProjects]);
-
-    setShowProjectDetailModal(false);
-    toast.success("Request Accepted!", {
-      description: `${acceptedRequest.projectTitle} has been added to your ongoing projects.`,
-      duration: 4000,
-      className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
+    if (!res.ok) throw new Error(`Profile fetch failed (${res.status})`);
+    const data = (await res.json()) as MeResponse;
+    const ap = data.user.advisorProfile;
+    setProfile({
+      name: data.user.name,
+      title: ap?.title ?? "",
+      department: ap?.department ?? "",
+      email: data.user.email,
+      expertise: ap?.expertise ?? [],
+      researchInterests: ap?.researchInterests ?? [],
+      previousProjects: ap?.previousProjects ?? [],
     });
+    setIsAvailable(ap?.isAvailable ?? true);
+  }, [router]);
+
+  const fetchRequests = useCallback(async () => {
+    const res = await fetch(`${API_URL}/advisors/requests`, {
+      headers: authHeaders(), cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`Requests fetch failed (${res.status})`);
+    const data = (await res.json()) as { requests: AdvisorRequestDTO[] };
+    setRequests(data.requests ?? []);
+  }, []);
+
+  const fetchAdvisedProjects = useCallback(async () => {
+    const res = await fetch(`${API_URL}/projects/advised`, {
+      headers: authHeaders(), cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`Advised projects fetch failed (${res.status})`);
+    const data = (await res.json()) as { projects: AdvisedProjectDTO[] };
+    setAdvisedProjects(data.projects ?? []);
+  }, []);
+
+  const fetchAnnouncements = useCallback(async () => {
+    // Public endpoint — no auth required
+    const res = await fetch(`${API_URL}/admin/announcements`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Announcements fetch failed (${res.status})`);
+    const data = (await res.json()) as { announcements: AnnouncementDTO[] };
+    setAnnouncements(data.announcements ?? []);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        await Promise.all([
+          fetchProfile(),
+          fetchRequests(),
+          fetchAdvisedProjects(),
+          fetchAnnouncements(),
+        ]);
+      } catch (err) {
+        console.error("Advisor dashboard load failed:", err);
+        toast.error("Failed to load dashboard data");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [fetchProfile, fetchRequests, fetchAdvisedProjects, fetchAnnouncements]);
+
+  // Seed the edit form whenever we open the modal (or profile reloads).
+  useEffect(() => {
+    setEditFormData(profile);
+  }, [profile]);
+
+  // ---------------------------------------------------------------------------
+  // Derived stats
+  // ---------------------------------------------------------------------------
+  const stats = useMemo(() => {
+    const pendingRequests = requests.filter(r => r.status === "PENDING").length;
+    const activeProjects = advisedProjects.filter(p => p.status !== "COMPLETED").length;
+    // Unique student ids across all advised teams.
+    const studentIds = new Set<string>();
+    for (const p of advisedProjects) {
+      for (const m of p.teamMembers) studentIds.add(m.userId);
+    }
+    return { pendingRequests, activeProjects, totalStudents: studentIds.size };
+  }, [requests, advisedProjects]);
+
+  // ---------------------------------------------------------------------------
+  // Mutations
+  // ---------------------------------------------------------------------------
+  const respondToRequest = async (requestId: string, status: "ACCEPTED" | "REJECTED") => {
+    try {
+      const res = await fetch(`${API_URL}/advisors/${requestId}/respond`, {
+        method: "PUT",
+        headers: authHeaders(),
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+      const updatedRequest = requests.find(r => r.id === requestId);
+      setShowProjectDetailModal(false);
+
+      // Re-fetch authoritative data — accepting one request auto-rejects the
+      // others on the project, and the advised list changes too.
+      await Promise.all([fetchRequests(), fetchAdvisedProjects()]);
+
+      if (status === "ACCEPTED") {
+        toast.success("Request Accepted!", {
+          description: updatedRequest
+            ? `${updatedRequest.project.title} has been added to your ongoing projects.`
+            : undefined,
+          duration: 4000,
+          className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+        });
+      } else {
+        toast.error("Request Declined", {
+          description: updatedRequest
+            ? `You have declined the request for "${updatedRequest.project.title}".`
+            : undefined,
+          duration: 4000,
+          className: "bg-red-500/90 backdrop-blur-xl text-white border-red-400/50",
+        });
+      }
+    } catch (err) {
+      console.error("Respond failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to respond");
+    }
   };
 
-  const handleRejectRequest = (requestId: number) => {
-    const rejectedRequest = requests.find(req => req.id === requestId);
+  const handleAcceptRequest = (requestId: string) => respondToRequest(requestId, "ACCEPTED");
+  const handleRejectRequest = (requestId: string) => respondToRequest(requestId, "REJECTED");
 
-    setRequests(requests.map(req =>
-      req.id === requestId ? { ...req, status: "Rejected" as const } : req
-    ));
-
-    // Update stats: decrement pending
-    setStats(prev => ({
-      ...prev,
-      pendingRequests: prev.pendingRequests - 1
-    }));
-
-    setShowProjectDetailModal(false);
-    toast.error("Request Declined", {
-      description: `You have declined the request for "${rejectedRequest?.projectTitle}".`,
-      duration: 4000,
-      className: "bg-red-500/90 backdrop-blur-xl text-white border-red-400/50"
-    });
-  };
-
-  const handleViewProjectDetails = (request: ProjectRequest) => {
+  const handleViewProjectDetails = (request: AdvisorRequestDTO) => {
     setSelectedRequest(request);
     setShowProjectDetailModal(true);
   };
 
-  const handleViewOngoingDetails = (project: OngoingProject) => {
+  const handleViewOngoingDetails = (project: AdvisedProjectDTO) => {
     setSelectedOngoingProject(project);
     setShowOngoingDetailModal(true);
   };
 
-  const handleSaveProfile = () => {
-    setProfileData(editFormData);
-    setShowEditProfileModal(false);
-    toast.success("Profile Updated!", {
-      description: "Your profile has been updated successfully.",
-      duration: 4000,
-      className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50"
-    });
+  const handleSaveProfile = async () => {
+    setSavingProfile(true);
+    try {
+      const res = await fetch(`${API_URL}/users/me`, {
+        method: "PUT",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          name: editFormData.name,
+          title: editFormData.title,
+          department: editFormData.department,
+          expertise: editFormData.expertise,
+          researchInterests: editFormData.researchInterests,
+          previousProjects: editFormData.previousProjects,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+      // Reflect locally + reload so localStorage userName stays in sync.
+      setProfile(editFormData);
+      localStorage.setItem("userName", editFormData.name);
+      setShowEditProfileModal(false);
+      toast.success("Profile Updated!", {
+        description: "Your profile has been updated successfully.",
+        duration: 4000,
+        className: "bg-blue-500/90 backdrop-blur-xl text-white border-blue-400/50",
+      });
+    } catch (err) {
+      console.error("Profile save failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to update profile");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleAvailabilityToggle = async () => {
+    const next = !isAvailable;
+    // Optimistic toggle — feels instant.
+    setIsAvailable(next);
+    try {
+      const res = await fetch(`${API_URL}/users/me`, {
+        method: "PUT",
+        headers: authHeaders(),
+        body: JSON.stringify({ isAvailable: next }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+    } catch (err) {
+      console.error("Availability update failed:", err);
+      // Roll back
+      setIsAvailable(!next);
+      toast.error(err instanceof Error ? err.message : "Failed to update availability");
+    }
   };
 
   const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("userName");
+    localStorage.removeItem("userRole");
     router.push("/");
   };
 
+  const initials = profile.name
+    ? profile.name.split(" ").map(n => n[0]).join("").slice(0, 3)
+    : "?";
+
+  // ---------------------------------------------------------------------------
+  // Loading guard
+  // ---------------------------------------------------------------------------
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950">
+        <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Dashboard View
+  // ---------------------------------------------------------------------------
   if (viewMode === "dashboard") {
+    const pendingRequests = requests.filter(r => r.status === "PENDING");
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950 relative overflow-hidden">
         <Toaster position="bottom-right" />
@@ -329,7 +431,6 @@ export default function AdvisorDashboard() {
         {/* Top Navigation Bar */}
         <nav className="relative z-20 px-8 py-4">
           <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-full px-8 py-4 flex items-center justify-between">
-            {/* Logo with Image */}
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center overflow-hidden">
                 <Award className="w-6 h-6 text-slate-900" strokeWidth={2.5} />
@@ -337,25 +438,21 @@ export default function AdvisorDashboard() {
               <div className="text-3xl font-bold text-white tracking-tight">SCOPE</div>
             </div>
 
-            {/* Profile Area */}
             <div className="relative">
               <button
                 onClick={() => setShowProfileDropdown(!showProfileDropdown)}
                 className="flex items-center space-x-4 px-6 py-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full transition-all"
               >
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">
-                    {profileData.name.split(" ").map(n => n[0]).join("")}
-                  </span>
+                  <span className="text-white font-bold text-sm">{initials}</span>
                 </div>
                 <div className="text-left">
                   <p className="text-white/60 text-xs">Welcome back,</p>
-                  <p className="text-white font-semibold">{profileData.name}</p>
+                  <p className="text-white font-semibold">{profile.name || "Advisor"}</p>
                 </div>
                 <ChevronDown className="w-5 h-5 text-white/60" strokeWidth={2} />
               </button>
 
-              {/* Opaque Profile Dropdown */}
               {showProfileDropdown && (
                 <div className="absolute top-full right-0 mt-3 w-64 bg-[#1A1A2E] border border-white/20 rounded-[60px] shadow-2xl overflow-hidden animate-slideDown">
                   <button
@@ -383,22 +480,19 @@ export default function AdvisorDashboard() {
 
         {/* Main Content */}
         <div className="relative z-10 px-8 py-6 flex space-x-6">
-          {/* LEFT SECTION - Enhanced Profile Summary & Availability */}
+          {/* LEFT — Profile Summary & Availability */}
           <div className="w-80 flex-shrink-0 space-y-6">
-            {/* Enhanced Profile Summary */}
             <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-8">
               <h2 className="text-xl font-bold text-white mb-6">Profile Summary</h2>
 
               <div className="mb-6">
                 <div className="w-20 h-20 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-white font-bold text-2xl">
-                    {profileData.name.split(" ").map(n => n[0]).join("")}
-                  </span>
+                  <span className="text-white font-bold text-2xl">{initials}</span>
                 </div>
-                <h3 className="text-2xl font-bold text-white text-center mb-1">{profileData.name}</h3>
-                <p className="text-blue-300 text-center mb-1 font-semibold">{profileData.title}</p>
-                <p className="text-white/60 text-center mb-3">{profileData.department}</p>
-                <p className="text-white/50 text-sm text-center">{profileData.email}</p>
+                <h3 className="text-2xl font-bold text-white text-center mb-1">{profile.name}</h3>
+                <p className="text-blue-300 text-center mb-1 font-semibold">{profile.title || "—"}</p>
+                <p className="text-white/60 text-center mb-3">{profile.department || "—"}</p>
+                <p className="text-white/50 text-sm text-center">{profile.email}</p>
               </div>
 
               <div className="mb-6">
@@ -407,7 +501,7 @@ export default function AdvisorDashboard() {
                   <span>Areas of Expertise</span>
                 </h4>
                 <div className="flex flex-wrap gap-2">
-                  {profileData.expertise.map((skill, idx) => (
+                  {profile.expertise.map((skill, idx) => (
                     <span
                       key={idx}
                       className="px-3 py-2 bg-blue-500/20 text-blue-200 rounded-full text-xs border border-blue-400/30"
@@ -424,7 +518,7 @@ export default function AdvisorDashboard() {
                   <span>Research Interests</span>
                 </h4>
                 <div className="flex flex-wrap gap-2">
-                  {profileData.researchInterests.map((interest, idx) => (
+                  {profile.researchInterests.map((interest, idx) => (
                     <span
                       key={idx}
                       className="px-3 py-2 bg-purple-500/20 text-purple-200 rounded-full text-xs border border-purple-400/30"
@@ -435,14 +529,13 @@ export default function AdvisorDashboard() {
                 </div>
               </div>
 
-              {/* Previously Supervised Projects */}
               <div>
                 <h4 className="text-white/80 text-sm font-semibold mb-3 flex items-center space-x-2">
                   <GraduationCap className="w-4 h-4" />
                   <span>Previously Supervised Projects</span>
                 </h4>
                 <div className="bg-white/5 rounded-[30px] p-4 max-h-40 overflow-y-auto space-y-2">
-                  {profileData.previousProjects.map((project, idx) => (
+                  {profile.previousProjects.map((project, idx) => (
                     <div key={idx} className="flex items-start space-x-2">
                       <CheckCircle className="w-4 h-4 text-blue-300 flex-shrink-0 mt-0.5" strokeWidth={2} />
                       <p className="text-white/70 text-xs leading-relaxed">{project}</p>
@@ -452,7 +545,7 @@ export default function AdvisorDashboard() {
               </div>
             </div>
 
-            {/* Availability Status with Smaller Toggle */}
+            {/* Availability Toggle */}
             <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-8">
               <h2 className="text-xl font-bold text-white mb-4">Availability Status</h2>
               <p className="text-white/60 text-sm mb-6">
@@ -460,7 +553,7 @@ export default function AdvisorDashboard() {
               </p>
 
               <button
-                onClick={() => setIsAvailable(!isAvailable)}
+                onClick={handleAvailabilityToggle}
                 className={`w-full h-10 rounded-full transition-all duration-300 relative ${isAvailable ? "bg-gradient-to-r from-blue-500 to-cyan-400" : "bg-white/20"} p-[0px] m-[0px]`}
               >
                 <div
@@ -474,9 +567,8 @@ export default function AdvisorDashboard() {
             </div>
           </div>
 
-          {/* CENTER SECTION - Stats & Requests */}
+          {/* CENTER — Stats & Requests */}
           <div className="flex-1 space-y-6">
-            {/* Stats Row */}
             <div className="grid grid-cols-3 gap-6">
               <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-8">
                 <div className="flex items-center justify-between mb-4">
@@ -509,7 +601,6 @@ export default function AdvisorDashboard() {
               </div>
             </div>
 
-            {/* Announcements Button */}
             <button
               onClick={() => setShowAnnouncementsModal(true)}
               className="w-full px-8 py-5 bg-white/10 hover:bg-white/20 backdrop-blur-2xl border border-white/20 rounded-[30px] text-white font-bold text-lg transition-all flex items-center justify-center space-x-3"
@@ -518,40 +609,41 @@ export default function AdvisorDashboard() {
               <span>View Announcements</span>
             </button>
 
-            {/* Incoming Requests Feed */}
             <div>
               <h2 className="text-2xl font-bold text-white mb-6">Incoming Project Requests</h2>
               <div className="space-y-4">
-                {requests.filter(req => req.status === "Pending").map((request) => (
+                {pendingRequests.map((request) => (
                   <div
                     key={request.id}
                     className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-8 hover:bg-white/15 transition-all"
                   >
                     <div className="flex items-start justify-between mb-4">
                       <div>
-                        <h3 className="text-xl font-bold text-white mb-2">{request.projectTitle}</h3>
+                        <h3 className="text-xl font-bold text-white mb-2">{request.project.title}</h3>
                         <div className="flex items-center space-x-3">
                           <span className="px-4 py-2 bg-blue-500/20 text-blue-200 rounded-full text-sm border border-blue-400/30">
-                            {request.category}
+                            {request.project.category?.name ?? "Uncategorized"}
                           </span>
                           <span className="text-white/50 text-sm flex items-center space-x-2">
                             <Calendar className="w-4 h-4" strokeWidth={2} />
-                            <span>{request.requestDate}</span>
+                            <span>{formatDate(request.createdAt)}</span>
                           </span>
                         </div>
                       </div>
                     </div>
 
-                    <p className="text-white/70 mb-4 line-clamp-2">{request.projectDescription}</p>
+                    <p className="text-white/70 mb-4 line-clamp-2">{request.project.description}</p>
 
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center space-x-2 text-white/60">
                         <Users className="w-5 h-5" strokeWidth={2} />
-                        <span className="text-sm font-medium">{request.teamMembers.length} members</span>
+                        <span className="text-sm font-medium">
+                          {request.project.teamMembers.length} member{request.project.teamMembers.length !== 1 ? "s" : ""}
+                        </span>
                       </div>
                       <div className="flex items-center space-x-2 text-white/60">
                         <DollarSign className="w-5 h-5" strokeWidth={2} />
-                        <span className="text-sm font-medium">{request.budget}</span>
+                        <span className="text-sm font-medium">{request.project.budget ?? "—"}</span>
                       </div>
                     </div>
 
@@ -578,7 +670,7 @@ export default function AdvisorDashboard() {
                   </div>
                 ))}
 
-                {requests.filter(req => req.status === "Pending").length === 0 && (
+                {pendingRequests.length === 0 && (
                   <div className="text-center py-16">
                     <p className="text-white/50 text-lg">No pending requests</p>
                   </div>
@@ -587,12 +679,12 @@ export default function AdvisorDashboard() {
             </div>
           </div>
 
-          {/* RIGHT SECTION - Ongoing Projects */}
+          {/* RIGHT — Ongoing Projects */}
           <div className="w-80 flex-shrink-0">
             <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-8">
               <h2 className="text-xl font-bold text-white mb-6">Ongoing Projects</h2>
               <div className="space-y-3 max-h-[calc(100vh-300px)] overflow-y-auto">
-                {ongoingProjects.map((project) => (
+                {advisedProjects.map((project) => (
                   <div
                     key={project.id}
                     className="bg-white/10 border border-white/20 rounded-[30px] p-5 hover:bg-white/20 transition-all"
@@ -601,10 +693,10 @@ export default function AdvisorDashboard() {
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-white/50 text-xs flex items-center space-x-1">
                         <Users className="w-3 h-3" strokeWidth={2} />
-                        <span>{project.teamSize} members</span>
+                        <span>{project.teamMembers.length} members</span>
                       </span>
                       <span className="px-3 py-1 bg-blue-500/20 text-blue-200 rounded-full text-xs border border-blue-400/30">
-                        {project.status}
+                        {humanizeProjectStatus(project.status)}
                       </span>
                     </div>
                     <button
@@ -616,12 +708,16 @@ export default function AdvisorDashboard() {
                     </button>
                   </div>
                 ))}
+
+                {advisedProjects.length === 0 && (
+                  <p className="text-white/40 text-sm text-center py-6">No active projects yet</p>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Announcements Modal - Glass Overlay with Backdrop Blur */}
+        {/* Announcements Modal */}
         {showAnnouncementsModal && (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-6 animate-fadeIn">
             <div className="bg-white/15 backdrop-blur-2xl rounded-[60px] border border-white/30 p-12 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-slideUp">
@@ -647,13 +743,17 @@ export default function AdvisorDashboard() {
                     <div className="flex items-start justify-between mb-4">
                       <h3 className="text-2xl font-bold text-white">{announcement.title}</h3>
                       <span className="px-4 py-2 bg-blue-500/20 text-blue-200 rounded-full text-sm border border-blue-400/30">
-                        {announcement.type}
+                        {announcement.category}
                       </span>
                     </div>
-                    <p className="text-white/50 text-sm mb-4">{announcement.date}</p>
+                    <p className="text-white/50 text-sm mb-4">{formatDate(announcement.createdAt)}</p>
                     <p className="text-white/70 leading-relaxed">{announcement.content}</p>
                   </div>
                 ))}
+
+                {announcements.length === 0 && (
+                  <p className="text-white/50 text-center py-6">No announcements yet</p>
+                )}
               </div>
             </div>
           </div>
@@ -665,12 +765,12 @@ export default function AdvisorDashboard() {
             <div className="bg-white/15 backdrop-blur-2xl rounded-[60px] border border-white/30 p-12 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl animate-slideUp">
               <div className="flex items-center justify-between mb-10">
                 <div>
-                  <h2 className="text-4xl font-bold text-white mb-2">{selectedRequest.projectTitle}</h2>
+                  <h2 className="text-4xl font-bold text-white mb-2">{selectedRequest.project.title}</h2>
                   <div className="flex items-center space-x-3">
                     <span className="px-4 py-2 bg-blue-500/20 text-blue-200 rounded-full text-sm border border-blue-400/30">
-                      {selectedRequest.category}
+                      {selectedRequest.project.category?.name ?? "Uncategorized"}
                     </span>
-                    <span className="text-white/60 text-sm">{selectedRequest.requestDate}</span>
+                    <span className="text-white/60 text-sm">{formatDate(selectedRequest.createdAt)}</span>
                   </div>
                 </div>
                 <button
@@ -684,22 +784,22 @@ export default function AdvisorDashboard() {
               <div className="mb-8 space-y-6">
                 <div>
                   <h3 className="text-lg font-semibold text-white/80 mb-3">Description</h3>
-                  <p className="text-white/70 text-base leading-relaxed">{selectedRequest.projectDescription}</p>
+                  <p className="text-white/70 text-base leading-relaxed">{selectedRequest.project.description}</p>
                 </div>
 
                 <div>
                   <h3 className="text-lg font-semibold text-white/80 mb-3">Budget</h3>
                   <div className="flex items-center space-x-2">
                     <DollarSign className="w-5 h-5 text-blue-300" strokeWidth={2} />
-                    <span className="text-white text-xl font-bold">{selectedRequest.budget}</span>
+                    <span className="text-white text-xl font-bold">{selectedRequest.project.budget ?? "—"}</span>
                   </div>
                 </div>
 
-                {selectedRequest.requiredRoles && (
+                {selectedRequest.project.requiredSkills?.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold text-white/80 mb-3">Required Roles</h3>
                     <div className="flex flex-wrap gap-2">
-                      {selectedRequest.requiredRoles.map((role, idx) => (
+                      {selectedRequest.project.requiredSkills.map((role, idx) => (
                         <span
                           key={idx}
                           className="px-4 py-2 bg-purple-500/20 text-purple-200 rounded-full text-sm border border-purple-400/30"
@@ -711,17 +811,24 @@ export default function AdvisorDashboard() {
                   </div>
                 )}
 
+                {selectedRequest.message && (
+                  <div>
+                    <h3 className="text-lg font-semibold text-white/80 mb-3">Message from Student</h3>
+                    <p className="text-white/70 leading-relaxed">{selectedRequest.message}</p>
+                  </div>
+                )}
+
                 <div>
-                  <h3 className="text-lg font-semibold text-white/80 mb-4">Team Members ({selectedRequest.teamMembers.length})</h3>
+                  <h3 className="text-lg font-semibold text-white/80 mb-4">Team Members ({selectedRequest.project.teamMembers.length})</h3>
                   <div className="space-y-3">
-                    {selectedRequest.teamMembers.map((member, idx) => (
+                    {selectedRequest.project.teamMembers.map((member) => (
                       <div
-                        key={idx}
+                        key={member.id}
                         className="flex items-center justify-between px-6 py-4 bg-white/10 rounded-[30px] border border-white/20"
                       >
                         <div>
-                          <p className="text-white font-semibold">{member.name}</p>
-                          <p className="text-white/50 text-sm">{member.email}</p>
+                          <p className="text-white font-semibold">{member.user.name}</p>
+                          <p className="text-white/50 text-sm">{member.user.email}</p>
                         </div>
                         <span className="px-4 py-2 bg-purple-500/20 text-purple-200 rounded-full text-sm border border-purple-400/30">
                           {member.role}
@@ -761,10 +868,10 @@ export default function AdvisorDashboard() {
                   <h2 className="text-4xl font-bold text-white mb-2">{selectedOngoingProject.title}</h2>
                   <div className="flex items-center space-x-3">
                     <span className="px-4 py-2 bg-blue-500/20 text-blue-200 rounded-full text-sm border border-blue-400/30">
-                      {selectedOngoingProject.category}
+                      {selectedOngoingProject.category?.name ?? "Uncategorized"}
                     </span>
                     <span className="px-4 py-2 bg-purple-500/20 text-purple-200 rounded-full text-sm border border-purple-400/30">
-                      {selectedOngoingProject.status}
+                      {humanizeProjectStatus(selectedOngoingProject.status)}
                     </span>
                   </div>
                 </div>
@@ -781,21 +888,21 @@ export default function AdvisorDashboard() {
                   <h3 className="text-lg font-semibold text-white/80 mb-3">Budget</h3>
                   <div className="flex items-center space-x-2">
                     <DollarSign className="w-5 h-5 text-blue-300" strokeWidth={2} />
-                    <span className="text-white text-xl font-bold">{selectedOngoingProject.budget}</span>
+                    <span className="text-white text-xl font-bold">{selectedOngoingProject.budget ?? "—"}</span>
                   </div>
                 </div>
 
                 <div>
                   <h3 className="text-lg font-semibold text-white/80 mb-4">Team Members ({selectedOngoingProject.teamMembers.length})</h3>
                   <div className="space-y-3">
-                    {selectedOngoingProject.teamMembers.map((member, idx) => (
+                    {selectedOngoingProject.teamMembers.map((member) => (
                       <div
-                        key={idx}
+                        key={member.id}
                         className="flex items-center justify-between px-6 py-4 bg-white/10 rounded-[30px] border border-white/20"
                       >
                         <div>
-                          <p className="text-white font-semibold">{member.name}</p>
-                          <p className="text-white/50 text-sm">{member.email}</p>
+                          <p className="text-white font-semibold">{member.user.name}</p>
+                          <p className="text-white/50 text-sm">{member.user.email}</p>
                         </div>
                         <span className="px-4 py-2 bg-purple-500/20 text-purple-200 rounded-full text-sm border border-purple-400/30">
                           {member.role}
@@ -819,14 +926,15 @@ export default function AdvisorDashboard() {
     );
   }
 
+  // ---------------------------------------------------------------------------
   // Profile Showcase View
+  // ---------------------------------------------------------------------------
   if (viewMode === "profile-showcase") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-violet-950 to-purple-950 relative overflow-hidden">
         <div className="absolute inset-0 opacity-30 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZmlsdGVyIGlkPSJub2lzZSI+PGZlVHVyYnVsZW5jZSB0eXBlPSJmcmFjdGFsTm9pc2UiIGJhc2VGcmVxdWVuY3k9IjAuOSIgbnVtT2N0YXZlcz0iNCIgc3RpdGNoVGlsZXM9InN0aXRjaCIvPjwvZmlsdGVyPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbHRlcj0idXJsKCNub2lzZSkiIG9wYWNpdHk9IjAuNiIvPjwvc3ZnPg==')]" />
 
         <div className="relative z-10 min-h-screen px-8 py-16">
-          {/* Back Button */}
           <button
             onClick={() => setViewMode("dashboard")}
             className="px-6 py-3 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-full font-semibold transition-all mx-[0px] mt-[-30px] mb-[32px]"
@@ -834,7 +942,6 @@ export default function AdvisorDashboard() {
             ← Back to Dashboard
           </button>
 
-          {/* Top Right Buttons */}
           <div className="absolute top-8 right-8 flex mx-[0px] my-[-40px]">
             <button
               onClick={() => setShowEditProfileModal(true)}
@@ -852,34 +959,28 @@ export default function AdvisorDashboard() {
             </button>
           </div>
 
-          {/* Profile Layout */}
           <div className="max-w-7xl mx-auto mt-16">
             <div className="grid grid-cols-3 gap-8">
-              {/* LEFT - Avatar & Basic Info */}
               <div className="col-span-1">
                 <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] text-center px-[0px] py-[40px] mx-[0px] my-[-40px]">
                   <div className="w-48 h-48 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl">
-                    <span className="text-white font-bold text-6xl">
-                      {profileData.name.split(" ").map(n => n[0]).join("")}
-                    </span>
+                    <span className="text-white font-bold text-6xl">{initials}</span>
                   </div>
-                  <h1 className="text-4xl font-bold text-white mb-3">{profileData.name}</h1>
-                  <p className="text-2xl text-blue-300 mb-2 font-semibold">{profileData.title}</p>
-                  <p className="text-xl text-white/60 mb-4">{profileData.department}</p>
-                  <p className="text-white/50">{profileData.email}</p>
+                  <h1 className="text-4xl font-bold text-white mb-3">{profile.name}</h1>
+                  <p className="text-2xl text-blue-300 mb-2 font-semibold">{profile.title || "—"}</p>
+                  <p className="text-xl text-white/60 mb-4">{profile.department || "—"}</p>
+                  <p className="text-white/50">{profile.email}</p>
                 </div>
               </div>
 
-              {/* RIGHT - Organized Glass Cards */}
               <div className="col-span-2 space-y-6">
-                {/* Expertise */}
                 <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-[40px] mx-[0px] mt-[-40px] mb-[24px]">
                   <h2 className="text-2xl font-bold text-white mb-6 flex items-center space-x-3">
                     <Target className="w-6 h-6 text-blue-300" />
                     <span>Areas of Expertise</span>
                   </h2>
                   <div className="flex flex-wrap gap-3">
-                    {profileData.expertise.map((skill, idx) => (
+                    {profile.expertise.map((skill, idx) => (
                       <span
                         key={idx}
                         className="px-5 py-3 bg-blue-500/20 text-blue-200 rounded-full text-base border border-blue-400/30 font-medium"
@@ -890,14 +991,13 @@ export default function AdvisorDashboard() {
                   </div>
                 </div>
 
-                {/* Research Interests */}
                 <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-10">
                   <h2 className="text-2xl font-bold text-white mb-6 flex items-center space-x-3">
                     <BookOpen className="w-6 h-6 text-purple-300" />
                     <span>Research Interests</span>
                   </h2>
                   <div className="flex flex-wrap gap-3">
-                    {profileData.researchInterests.map((interest, idx) => (
+                    {profile.researchInterests.map((interest, idx) => (
                       <span
                         key={idx}
                         className="px-5 py-3 bg-purple-500/20 text-purple-200 rounded-full text-base border border-purple-400/30 font-medium"
@@ -908,14 +1008,13 @@ export default function AdvisorDashboard() {
                   </div>
                 </div>
 
-                {/* Supervision History */}
                 <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[60px] p-10">
                   <h2 className="text-2xl font-bold text-white mb-6 flex items-center space-x-3">
                     <GraduationCap className="w-6 h-6 text-yellow-300" />
                     <span>Supervision History</span>
                   </h2>
                   <div className="space-y-3">
-                    {profileData.previousProjects.map((project, idx) => (
+                    {profile.previousProjects.map((project, idx) => (
                       <div key={idx} className="flex items-start space-x-3 px-6 py-4 bg-white/5 rounded-[30px]">
                         <CheckCircle className="w-5 h-5 text-blue-300 flex-shrink-0 mt-0.5" strokeWidth={2} />
                         <p className="text-white/80 leading-relaxed">{project}</p>
@@ -978,9 +1077,10 @@ export default function AdvisorDashboard() {
                   <input
                     type="email"
                     value={editFormData.email}
-                    onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
-                    className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
+                    disabled
+                    className="w-full px-6 py-4 bg-white/5 border border-white/20 rounded-[30px] text-white/60 placeholder-white/40 focus:outline-none cursor-not-allowed"
                   />
+                  <p className="text-white/40 text-xs mt-2 ml-2">Email cannot be changed here.</p>
                 </div>
 
                 <div>
@@ -988,7 +1088,7 @@ export default function AdvisorDashboard() {
                   <input
                     type="text"
                     value={editFormData.expertise.join(", ")}
-                    onChange={(e) => setEditFormData({ ...editFormData, expertise: e.target.value.split(",").map(s => s.trim()) })}
+                    onChange={(e) => setEditFormData({ ...editFormData, expertise: e.target.value.split(",").map(s => s.trim()).filter(s => s.length > 0) })}
                     className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
                 </div>
@@ -998,7 +1098,17 @@ export default function AdvisorDashboard() {
                   <input
                     type="text"
                     value={editFormData.researchInterests.join(", ")}
-                    onChange={(e) => setEditFormData({ ...editFormData, researchInterests: e.target.value.split(",").map(s => s.trim()) })}
+                    onChange={(e) => setEditFormData({ ...editFormData, researchInterests: e.target.value.split(",").map(s => s.trim()).filter(s => s.length > 0) })}
+                    className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-white/80 text-sm font-semibold mb-2">Previously Supervised Projects (one per line)</label>
+                  <textarea
+                    rows={5}
+                    value={editFormData.previousProjects.join("\n")}
+                    onChange={(e) => setEditFormData({ ...editFormData, previousProjects: e.target.value.split("\n").map(s => s.trim()).filter(s => s.length > 0) })}
                     className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-[30px] text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
                   />
                 </div>
@@ -1007,9 +1117,10 @@ export default function AdvisorDashboard() {
               <div className="flex gap-4 mt-10">
                 <button
                   onClick={handleSaveProfile}
-                  className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all"
+                  disabled={savingProfile}
+                  className="flex-1 px-8 py-5 bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/50 text-blue-200 rounded-[30px] font-bold text-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Save Changes
+                  {savingProfile ? "Saving..." : "Save Changes"}
                 </button>
                 <button
                   onClick={() => setShowEditProfileModal(false)}
